@@ -37,6 +37,7 @@ Resign **不适用于**：
 ## 系统要求
 
 - macOS 14 或更高版本；
+- Apple 芯片或 Intel 处理器；
 - 完整安装的 Xcode，且包含 `xcodebuild` 和 `devicectl`；
 - Xcode 中已经登录 Apple Developer 账号；
 - iPhone/iPad 已信任并与当前 Mac 配对。
@@ -81,6 +82,38 @@ XCODE_PATH=/Applications/Xcode.app ./scripts/build-macos-app.sh
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild -project Resign.xcodeproj -scheme Resign test
+```
+
+## 安装发布版
+
+1. 在 GitHub Releases 下载 `Resign-<版本>.dmg` 和对应的 `.sha256` 文件。
+2. 在下载目录校验文件：
+
+   ```bash
+   shasum -a 256 -c Resign-<版本>.dmg.sha256
+   ```
+
+3. 打开 DMG，将 `Resign.app` 拖入 `Applications`。
+4. 当前公开构建未使用 Apple Developer ID 公证。首次启动时，请在 Finder 中按住 Control 点击 App，选择“打开”，再确认“打开”。后续可以正常启动。
+
+不要关闭 Gatekeeper，也不要使用来源不明的证书或配置文件。如果你要求免除首次手动确认，应从源码自行构建，或等待经过 Developer ID 签名和 Apple 公证的版本。
+
+## 制作 DMG
+
+运行：
+
+```bash
+./scripts/package-dmg.sh
+```
+
+脚本默认构建同时支持 Apple 芯片和 Intel 的通用 App，创建带 `Applications` 快捷方式的 DMG、重新挂载验证 App，并生成 SHA-256 校验文件。产物保存在 `dist/`，该目录不会提交到 Git。只构建指定架构时可设置 `BUILD_ARCHS`。
+
+拥有 Developer ID 和公证凭据时，可以通过环境变量使用它们；凭据只由 macOS 钥匙串和 Apple 工具读取，不应写入仓库：
+
+```bash
+SIGNING_IDENTITY='Developer ID Application: ...' \
+NOTARY_PROFILE='your-keychain-profile' \
+./scripts/package-dmg.sh
 ```
 
 ## 本地数据与隐私

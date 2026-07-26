@@ -32,11 +32,14 @@ cd "$PROJECT_ROOT"
 xcodegen generate
 
 DERIVED_DATA_PATH=${DERIVED_DATA_PATH:-"$PROJECT_ROOT/build/DerivedData"}
+BUILD_ARCHS=${BUILD_ARCHS:-"arm64 x86_64"}
 DEVELOPER_DIR="$XCODE_APP/Contents/Developer" "$XCODEBUILD" \
     -project Resign.xcodeproj \
     -scheme Resign \
     -configuration Release \
     -derivedDataPath "$DERIVED_DATA_PATH" \
+    ARCHS="$BUILD_ARCHS" \
+    ONLY_ACTIVE_ARCH=NO \
     build
 
 APP_PATH="$DERIVED_DATA_PATH/Build/Products/Release/Resign.app"
