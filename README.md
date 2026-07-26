@@ -1,0 +1,113 @@
+# Resign
+
+Resign 是一个原生 macOS 工具，用于定期重新构建你拥有源码的 iOS 项目，使用 Xcode 自动签名，并把新构建的 App 安装到已配对的实体 iPhone 或 iPad。
+
+它主要解决个人开发者签名有效期较短时，需要重复打开 Xcode、构建和安装的问题。
+
+## 适用范围
+
+Resign 适合以下场景：
+
+- 你拥有 iOS App 的源代码和合法使用权；
+- 项目可以通过 `.xcodeproj` 或 `.xcworkspace` 构建；
+- Xcode 已登录可用的 Apple Developer 账号，项目支持自动签名；
+- 目标设备已与 Mac 配对，可通过 USB 或本地网络连接；
+- 希望手动或定期重新构建并安装 Debug/Release App。
+
+Resign **不适用于**：
+
+- 对下载的第三方、App Store 或加密 IPA 进行破解、脱壳或绕过 DRM；
+- 没有源代码的 IPA/App 通用重签名；
+- 绕过证书撤销、设备限制、企业策略或 Apple 平台安全机制；
+- 无人登录时运行。定时功能使用当前用户的 LaunchAgent；
+- 替代 Xcode、开发者账号、签名证书或 Provisioning Profile。
+
+## 主要功能
+
+- 扫描并管理多个 Xcode 项目；
+- 自动读取共享 Scheme；
+- 检测已配对的实体 iOS/iPadOS 设备；
+- 使用独立 DerivedData 目录重新构建每个项目；
+- 从 Xcode 构建设置中准确定位主 App，避免安装旧产物或扩展；
+- 通过 `xcrun devicectl` 安装到一个或多个设备；
+- 支持取消、临时错误重试、防止构建期间睡眠和完成通知；
+- 在指定时间每天检查，达到设定间隔后执行自动任务；
+- 将手动和后台任务日志统一显示在 App 中。
+
+## 系统要求
+
+- macOS 14 或更高版本；
+- 完整安装的 Xcode，且包含 `xcodebuild` 和 `devicectl`；
+- Xcode 中已经登录 Apple Developer 账号；
+- iPhone/iPad 已信任并与当前 Mac 配对。
+
+项目构建脚本会自动尝试 `/Applications/Xcode.app` 和 `/Applications/Xcode-beta.app`，也可以通过 `XCODE_PATH` 指定其他位置。
+
+## 使用方法
+
+1. 启动 Resign，在“调度”页面选择实际使用的 Xcode。
+2. 在“项目”页面添加 `.xcodeproj`、`.xcworkspace`，或者扫描一个文件夹。
+3. 编辑项目，确认 Scheme、Debug/Release 配置和目标设备。
+4. 打开“设备”页面刷新，确认目标设备显示为可用。
+5. 点击“执行全部”或项目卡片上的执行按钮。
+6. 如需自动执行，在“调度”页面设置间隔和每日检查时间，然后点击“安装 / 更新”。
+7. 在“日志”页面查看手动执行以及后台执行结果。
+
+定时任务每天在指定时间检查一次。只有距离上一次全部成功已经达到设定天数时，才会真正构建。Mac 睡眠错过日历时间后，`launchd` 会在唤醒时处理该次计划；用户退出登录或设备不可用时无法完成安装。
+
+## 从源码构建
+
+安装 [XcodeGen](https://github.com/yonaskolb/XcodeGen) 后运行：
+
+```bash
+xcodegen generate
+./scripts/build-macos-app.sh
+```
+
+指定 Xcode：
+
+```bash
+XCODE_PATH=/Applications/Xcode.app ./scripts/build-macos-app.sh
+```
+
+构建并安装到 `/Applications/Resign.app`：
+
+```bash
+./scripts/install-macos-app.sh
+```
+
+运行测试：
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  xcodebuild -project Resign.xcodeproj -scheme Resign test
+```
+
+## 本地数据与隐私
+
+Resign 不上传项目、设备或签名信息。Xcode 负责访问钥匙串中的开发者凭据。App 的配置和日志保存在：
+
+```text
+~/Library/Application Support/Resign/
+```
+
+LaunchAgent 配置保存在：
+
+```text
+~/Library/LaunchAgents/com.resign.auto.plist
+```
+
+日志可能包含本地项目路径、编译器输出和设备标识，因此不应直接上传到公开 Issue。仓库的忽略规则会排除配置、日志、Provisioning Profile 和常见签名文件。
+
+## 安全设计
+
+- 交互式命令使用 `Foundation.Process` 参数数组，不通过 Shell 拼接；
+- 定时脚本中的所有用户字段都采用单引号安全转义；
+- DerivedData 删除操作限制在 `/tmp/ResignBuild/<项目 UUID>`；
+- 安装前读取 `TARGET_BUILD_DIR` 和 `WRAPPER_NAME`，无法唯一确认主 App 时停止；
+- LaunchAgent 安装会检查 `launchctl` 的真实结果，不以 plist 是否存在代替运行状态；
+- 编译/签名类确定性错误不会长时间盲目重试。
+
+## 开源许可
+
+[MIT License](LICENSE)

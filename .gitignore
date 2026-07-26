@@ -1,0 +1,19 @@
+.DS_Store
+build/
+DerivedData/
+*.xcresult
+*.xcuserstate
+**/xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+.swiftpm/
+
+# Local configuration, logs, signing material, and device-bearing profiles
+config.json
+resign_all.sh
+logs/
+.env
+.env.*
+*.p12
+*.mobileprovision
+*.provisionprofile
