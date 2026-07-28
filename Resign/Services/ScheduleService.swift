@@ -17,7 +17,7 @@ enum ScheduleServiceError: LocalizedError {
 
 enum ScheduleService {
     static let label = "com.resign.auto"
-    static let scheduleVersion = 2
+    static let scheduleVersion = 3
 
     private static var userDomain: String { "gui/\(getuid())" }
 
@@ -35,9 +35,38 @@ enum ScheduleService {
         FileManager.default.fileExists(atPath: plistURL.path)
     }
 
-    static var needsUpdate: Bool {
-        guard let script = try? String(contentsOf: AppPaths.scriptURL, encoding: .utf8) else { return true }
-        return !script.contains("# Resign schedule version: \(scheduleVersion)")
+    static func needsUpdate(settings: AppSettings) -> Bool {
+        guard let script = try? String(contentsOf: AppPaths.scriptURL, encoding: .utf8),
+              script.contains("# Resign schedule version: \(scheduleVersion)"),
+              let data = try? Data(contentsOf: plistURL),
+              let object = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let plist = object as? [String: Any]
+        else {
+            return true
+        }
+
+        return !isCurrentPlist(plist, scriptURL: AppPaths.scriptURL, settings: settings)
+    }
+
+    static func isCurrentPlist(
+        _ plist: [String: Any],
+        scriptURL: URL,
+        settings: AppSettings
+    ) -> Bool {
+        guard plist["StartInterval"] == nil,
+              plist["Label"] as? String == label,
+              plist["RunAtLoad"] as? Bool == false,
+              let arguments = plist["ProgramArguments"] as? [String],
+              arguments == ["/bin/bash", scriptURL.path],
+              let calendar = plist["StartCalendarInterval"] as? [String: Any],
+              let hour = calendar["Hour"] as? Int,
+              let minute = calendar["Minute"] as? Int
+        else {
+            return false
+        }
+
+        return hour == min(max(settings.scheduleHour, 0), 23)
+            && minute == min(max(settings.scheduleMinute, 0), 59)
     }
 
     static func install(scriptURL: URL, settings: AppSettings, projects: [iOSProject]) throws {
@@ -91,7 +120,7 @@ enum ScheduleService {
             "StartCalendarInterval": [
                 "Hour": min(max(settings.scheduleHour, 0), 23),
                 "Minute": min(max(settings.scheduleMinute, 0), 59)
-            ],
+            ] as [String: Any],
             "StandardOutPath": AppPaths.logDirectory.appendingPathComponent("stdout.log").path,
             "StandardErrorPath": AppPaths.logDirectory.appendingPathComponent("stderr.log").path,
             "RunAtLoad": false,
@@ -123,7 +152,7 @@ enum ScheduleService {
         let retryCount = min(max(settings.maxRetries, 0), 3)
         let maxAttempts = settings.enableRetry ? 1 + retryCount : 1
         let retrySeconds = min(max(settings.retryIntervalMinutes, 1), 120) * 60
-        let intervalSeconds = min(max(settings.resignIntervalDays, 1), 7) * 86_400
+        let intervalDays = min(max(settings.resignIntervalDays, 1), 7)
         let cooldownSeconds = min(max(settings.buildCooldownSeconds, 0), 60)
 
         var script = """
@@ -139,7 +168,7 @@ enum ScheduleService {
         PLUTIL='/usr/bin/plutil'
         LOG_DIR=\(shellQuote(logDirectory))
         LAST_SUCCESS_FILE=\(shellQuote(lastSuccessFile))
-        INTERVAL_SECONDS=\(intervalSeconds)
+        INTERVAL_DAYS=\(intervalDays)
         PREVENT_SLEEP=\(settings.preventSleep ? 1 : 0)
         NOTIFY_ON_COMPLETE=\(settings.notifyOnComplete ? 1 : 0)
         PROJECT_COUNT=\(enabled.count)
@@ -149,8 +178,12 @@ enum ScheduleService {
         now_epoch=$(date '+%s')
         if [ -f "$LAST_SUCCESS_FILE" ]; then
             last_epoch=$(tr -dc '0-9' < "$LAST_SUCCESS_FILE")
-            if [ -n "$last_epoch" ] && [ $((now_epoch - last_epoch)) -lt "$INTERVAL_SECONDS" ]; then
-                exit 0
+            if [ -n "$last_epoch" ]; then
+                due_day=$(date -r "$last_epoch" -v+"${INTERVAL_DAYS}"d '+%Y%m%d' 2>/dev/null || true)
+                today=$(date '+%Y%m%d')
+                if [[ "$due_day" =~ ^[0-9]{8}$ ]] && [ "$today" -lt "$due_day" ]; then
+                    exit 0
+                fi
             fi
         fi
 
