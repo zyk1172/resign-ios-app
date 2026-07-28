@@ -11,11 +11,45 @@ final class ResignTests: XCTestCase {
             scriptURL: URL(fileURLWithPath: "/tmp/resign_all.sh"),
             settings: settings
         )
-        let calendar = try XCTUnwrap(plist["StartCalendarInterval"] as? [String: Int])
+        let calendar = try XCTUnwrap(plist["StartCalendarInterval"] as? [String: Any])
 
-        XCTAssertEqual(calendar["Hour"], 4)
-        XCTAssertEqual(calendar["Minute"], 45)
+        XCTAssertEqual(calendar["Hour"] as? Int, 4)
+        XCTAssertEqual(calendar["Minute"] as? Int, 45)
         XCTAssertNil(plist["StartInterval"])
+    }
+
+    func testLegacyIntervalScheduleRequiresMigration() {
+        var settings = AppSettings()
+        settings.scheduleHour = 3
+        settings.scheduleMinute = 0
+        let scriptURL = URL(fileURLWithPath: "/tmp/resign_all.sh")
+        let legacy: [String: Any] = [
+            "Label": ScheduleService.label,
+            "ProgramArguments": ["/bin/bash", scriptURL.path],
+            "StartInterval": 518_400,
+            "RunAtLoad": false
+        ]
+
+        XCTAssertFalse(
+            ScheduleService.isCurrentPlist(legacy, scriptURL: scriptURL, settings: settings)
+        )
+    }
+
+    func testCurrentScheduleMatchesConfiguredTimeAndScript() {
+        var settings = AppSettings()
+        settings.scheduleHour = 5
+        settings.scheduleMinute = 20
+        let scriptURL = URL(fileURLWithPath: "/tmp/resign_all.sh")
+        let current = ScheduleService.makePlist(scriptURL: scriptURL, settings: settings)
+
+        XCTAssertTrue(
+            ScheduleService.isCurrentPlist(current, scriptURL: scriptURL, settings: settings)
+        )
+
+        settings.scheduleMinute = 21
+        XCTAssertFalse(
+            ScheduleService.isCurrentPlist(current, scriptURL: scriptURL, settings: settings)
+        )
     }
 
     func testShellQuoteTreatsCommandSyntaxAsData() {
@@ -40,6 +74,8 @@ final class ResignTests: XCTestCase {
         XCTAssertTrue(script.contains("没有可用设备"))
         XCTAssertTrue(script.contains("RUN_OK=0"))
         XCTAssertTrue(script.contains("StartInterval") == false)
+        XCTAssertTrue(script.contains("INTERVAL_DAYS=6"))
+        XCTAssertTrue(script.contains("-v+\"${INTERVAL_DAYS}\"d"))
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")

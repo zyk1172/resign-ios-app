@@ -10,7 +10,8 @@ struct ResignApp: App {
                 .environment(store)
                 .onAppear {
                     if store.settings.autoInstallSchedule && !store.projects.isEmpty
-                        && (!store.isScheduleInstalled || ScheduleService.needsUpdate) {
+                        && (!store.isScheduleInstalled
+                            || ScheduleService.needsUpdate(settings: store.settings)) {
                         store.installSchedule()
                     }
                 }
