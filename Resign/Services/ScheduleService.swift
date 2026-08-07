@@ -17,7 +17,7 @@ enum ScheduleServiceError: LocalizedError {
 
 enum ScheduleService {
     static let label = "com.resign.auto"
-    static let scheduleVersion = 3
+    static let scheduleVersion = 4
 
     private static var userDomain: String { "gui/\(getuid())" }
 
@@ -217,6 +217,13 @@ enum ScheduleService {
             let scheme = shellQuote(project.scheme)
             let configuration = shellQuote(project.configuration)
             let derivedData = shellQuote("/tmp/ResignBuild/\(project.id.uuidString)")
+
+            let teamSigningArgument: String
+            if let teamID = project.teamID, !teamID.isEmpty {
+                teamSigningArgument = "DEVELOPMENT_TEAM=\(shellQuote(teamID)) \\\n                    "
+            } else {
+                teamSigningArgument = ""
+            }
             let projectIdentifier = shellQuote(project.id.uuidString)
             let deviceValues = project.deviceUDIDs.map(shellQuote).joined(separator: " ")
             let deviceSetup: String
@@ -271,7 +278,7 @@ enum ScheduleService {
                 -derivedDataPath "$DERIVED_DATA" \\
                 -allowProvisioningUpdates \\
                 CODE_SIGN_STYLE=Automatic \\
-                -showBuildSettings -json > "$BUILD_SETTINGS_FILE" 2>> "$LOG_FILE"
+                \(teamSigningArgument)-showBuildSettings -json > "$BUILD_SETTINGS_FILE" 2>> "$LOG_FILE"
 
             TARGET_BUILD_DIR=$("$PLUTIL" -extract 0.buildSettings.TARGET_BUILD_DIR raw -o - "$BUILD_SETTINGS_FILE" 2>/dev/null || true)
             WRAPPER_NAME=$("$PLUTIL" -extract 0.buildSettings.WRAPPER_NAME raw -o - "$BUILD_SETTINGS_FILE" 2>/dev/null || true)
@@ -292,7 +299,8 @@ enum ScheduleService {
                     -destination 'generic/platform=iOS' \\
                     -derivedDataPath "$DERIVED_DATA" \\
                     -allowProvisioningUpdates \\
-                    CODE_SIGN_STYLE=Automatic build >> "$LOG_FILE" 2>&1
+                    CODE_SIGN_STYLE=Automatic \\
+                    \(teamSigningArgument)build >> "$LOG_FILE" 2>&1
             else
                 "$XCODEBUILD" \\
                     \(project.projectFlag) "$PROJECT_PATH" \\
@@ -301,7 +309,8 @@ enum ScheduleService {
                     -destination 'generic/platform=iOS' \\
                     -derivedDataPath "$DERIVED_DATA" \\
                     -allowProvisioningUpdates \\
-                    CODE_SIGN_STYLE=Automatic build >> "$LOG_FILE" 2>&1
+                    CODE_SIGN_STYLE=Automatic \\
+                    \(teamSigningArgument)build >> "$LOG_FILE" 2>&1
             fi
             BUILD_EXIT=$?
 

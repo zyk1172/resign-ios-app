@@ -249,15 +249,27 @@ struct ProjectCard: View {
                 .lineLimit(1)
                 .padding(.top, 3)
 
-            // ── Config badge ──
-            Text(project.configuration)
-                .font(.system(size: 9, weight: .semibold))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2.5)
-                .background(statusColor.opacity(0.10))
-                .foregroundStyle(statusColor)
-                .clipShape(Capsule())
-                .padding(.top, 8)
+            // ── Config + Team badge ──
+            HStack(spacing: 4) {
+                Text(project.configuration)
+                    .font(.system(size: 9, weight: .semibold))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(statusColor.opacity(0.10))
+                    .foregroundStyle(statusColor)
+                    .clipShape(Capsule())
+                if let teamID = project.teamID, !teamID.isEmpty {
+                    Text(teamID)
+                        .font(.system(size: 9, weight: .medium))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2.5)
+                        .background(Color.gray.opacity(0.08))
+                        .foregroundStyle(.secondary)
+                        .clipShape(Capsule())
+                        .help("开发者 Team：\(teamID)")
+                }
+            }
+            .padding(.top, 8)
 
             Spacer(minLength: 8)
 
@@ -362,6 +374,7 @@ struct ProjectEditSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppStore.self) private var store
     @State private var schemes: [String] = []
+    @State private var teams: [DevelopmentTeam] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -405,6 +418,38 @@ struct ProjectEditSheet: View {
                         Text("Release").tag("Release")
                     }
                     .frame(maxWidth: 220)
+                }
+                HStack(spacing: 6) {
+                    Text("开发者 Team")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 90, alignment: .trailing)
+                    Picker("", selection: $project.teamID) {
+                        Text("未指定（跟随项目设置）").tag(String?.none)
+                        ForEach(teams) { team in
+                            Text(team.displayName).tag(String?.some(team.teamID))
+                        }
+                    }
+                    .frame(maxWidth: 185)
+                    Button {
+                        loadTeams()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .help("刷新开发者 Team 列表")
+                }
+                if teams.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 10))
+                        Text("未检测到有效的开发者签名证书，将跟随项目原有设置")
+                            .font(.system(size: 10))
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(.leading, 96)
+                    .padding(.trailing, 10)
                 }
                 // ── Multi-device selection ──
                 VStack(alignment: .leading, spacing: 8) {
@@ -477,7 +522,10 @@ struct ProjectEditSheet: View {
             .padding(16)
         }
         .frame(width: 400)
-        .onAppear { loadSchemes() }
+        .onAppear {
+            loadSchemes()
+            loadTeams()
+        }
     }
 
     private func loadSchemes() {
@@ -488,6 +536,13 @@ struct ProjectEditSheet: View {
                 xcodePath: store.settings.xcodePath
             )
             await MainActor.run { schemes = result }
+        }
+    }
+
+    private func loadTeams() {
+        Task {
+            let result = await BuildService.listDevelopmentTeams()
+            await MainActor.run { teams = result }
         }
     }
 

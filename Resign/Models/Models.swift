@@ -8,6 +8,8 @@ struct iOSProject: Identifiable, Codable, Equatable, Hashable {
     var projectPath: String = ""
     var scheme: String = ""
     var configuration: String = "Debug"
+    /// Apple Developer Team ID used for automatic signing; empty/nil = follow project defaults
+    var teamID: String? = nil
     /// Target device UDIDs; empty = first available device
     var deviceUDIDs: [String] = []
     var isEnabled: Bool = true
@@ -39,6 +41,14 @@ struct iOSDevice: Identifiable, Equatable {
     let osVersion: String
     let connectionType: String   // "USB" / "WiFi"
     let isAvailable: Bool
+}
+
+// MARK: - Development Team
+/// An Apple Developer Team that can be selected for automatic signing.
+struct DevelopmentTeam: Identifiable, Equatable, Hashable {
+    var id: String { teamID }
+    let teamID: String
+    let displayName: String
 }
 
 // MARK: - App Settings

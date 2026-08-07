@@ -227,6 +227,46 @@ enum BuildService {
         }
     }
 
+    // MARK: - List Development Teams
+    static func listDevelopmentTeams() async -> [DevelopmentTeam] {
+        let (_, output) = await run(
+            "/usr/bin/security",
+            arguments: ["find-identity", "-v", "-p", "codesigning"]
+        )
+
+        var teams: [DevelopmentTeam] = []
+        var seen = Set<String>()
+        for line in output.components(separatedBy: .newlines) {
+            guard let openQuote = line.range(of: "\""),
+                  let closeQuote = line.range(of: "\"", range: openQuote.upperBound..<line.endIndex)
+            else { continue }
+            let certificateName = String(line[openQuote.upperBound..<closeQuote.lowerBound])
+            guard let teamID = extractTeamID(from: certificateName), !seen.contains(teamID) else { continue }
+            seen.insert(teamID)
+            teams.append(DevelopmentTeam(teamID: teamID, displayName: certificateName))
+        }
+
+        return teams.sorted {
+            $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    /// Extracts the trailing "(TEAMID)" group from a codesigning certificate name,
+    /// e.g. `Apple Development: John Appleseed (ABCDE12345)` -> `ABCDE12345`.
+    static func extractTeamID(from certificateName: String) -> String? {
+        guard let open = certificateName.lastIndex(of: "("),
+              let close = certificateName.lastIndex(of: ")"),
+              close > open
+        else { return nil }
+
+        let candidate = certificateName[certificateName.index(after: open)..<close]
+            .trimmingCharacters(in: .whitespaces)
+        guard candidate.count == 10,
+              candidate.allSatisfy({ $0.isLetter || $0.isNumber })
+        else { return nil }
+        return candidate
+    }
+
     // MARK: - Build & Install
     static func buildAndInstall(
         project: iOSProject,
@@ -256,7 +296,7 @@ enum BuildService {
             return BuildResult(success: false, output: "错误：无法准备构建目录：\(error.localizedDescription)")
         }
 
-        let baseArguments = [
+        var baseArguments = [
             project.projectFlag, project.projectPath,
             "-scheme", project.scheme,
             "-configuration", project.configuration,
@@ -265,6 +305,9 @@ enum BuildService {
             "-allowProvisioningUpdates",
             "CODE_SIGN_STYLE=Automatic"
         ]
+        if let teamID = project.teamID, !teamID.isEmpty {
+            baseArguments += ["DEVELOPMENT_TEAM=\(teamID)"]
+        }
 
         var fullOutput = ""
         let settingsResult = await run(

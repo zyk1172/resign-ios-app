@@ -18,3 +18,4 @@ logs/
 *.p12
 *.mobileprovision
 *.provisionprofile
+*.profraw
