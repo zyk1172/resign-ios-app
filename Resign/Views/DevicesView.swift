@@ -9,7 +9,7 @@ struct DevicesView: View {
             // Header card
             HStack {
                 Label("物理设备", systemImage: "iphone")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: AppStyle.cardTitleSize, weight: .semibold))
                 Spacer()
                 Button {
                     refresh()
@@ -25,33 +25,32 @@ struct DevicesView: View {
                                 value: isRefreshing
                             )
                         Text("刷新")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: AppStyle.captionSize, weight: .medium))
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.regular)
                 .disabled(isRefreshing)
             }
-            .card(padding: 12)
+            .card()
 
             // Device cards
             if store.devices.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "iphone.slash")
-                        .font(.system(size: 32))
+                        .font(.system(size: AppStyle.emptyIconSize))
                         .foregroundStyle(.tertiary)
                     Text("未检测到物理设备")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: AppStyle.emptyTitleSize, weight: .medium))
                         .foregroundStyle(.secondary)
                     Text("通过 USB 或同一 WiFi 连接 iPhone 后刷新")
-                        .font(.system(size: 11))
+                        .font(.system(size: AppStyle.emptySubtitleSize))
                         .foregroundStyle(.tertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 10) {
+                    LazyVStack(spacing: AppStyle.listSpacing) {
                         ForEach(store.devices) { device in
                             DeviceCard(device: device)
                                 .transition(.move(edge: .top).combined(with: .opacity))
@@ -93,9 +92,9 @@ struct DeviceCard: View {
             // Info
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: AppStyle.listTitleSize, weight: .semibold))
                 Text(device.udid)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: AppStyle.listSubtitleSize, design: .monospaced))
                     .foregroundStyle(.tertiary)
                     .textSelection(.enabled)
             }
@@ -106,18 +105,18 @@ struct DeviceCard: View {
             HStack(spacing: 6) {
                 if !device.osVersion.isEmpty {
                     Text("iOS \(device.osVersion)")
-                        .font(.system(size: 11, weight: .medium))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
+                        .font(.system(size: AppStyle.captionSize, weight: .medium))
+                        .padding(.horizontal, AppStyle.badgeHPadding)
+                        .padding(.vertical, AppStyle.badgeVPadding)
                         .background(.blue.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        .clipShape(RoundedRectangle(cornerRadius: AppStyle.badgeCornerRadius))
                 }
                 Text(device.connectionType)
-                    .font(.system(size: 11, weight: .medium))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .font(.system(size: AppStyle.captionSize, weight: .medium))
+                    .padding(.horizontal, AppStyle.badgeHPadding)
+                    .padding(.vertical, AppStyle.badgeVPadding)
                     .background(.gray.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .clipShape(RoundedRectangle(cornerRadius: AppStyle.badgeCornerRadius))
             }
         }
         .card()

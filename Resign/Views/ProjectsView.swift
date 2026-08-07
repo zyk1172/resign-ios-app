@@ -59,13 +59,13 @@ struct ProjectsView: View {
     private var emptyState: some View {
         VStack(spacing: 14) {
             Image(systemName: "shippingbox")
-                .font(.system(size: 40))
+                .font(.system(size: AppStyle.emptyIconSize))
                 .foregroundStyle(.tertiary)
             Text("暂无项目")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: AppStyle.emptyTitleSize, weight: .medium))
                 .foregroundStyle(.secondary)
             Text("添加 Xcode 项目以开始自动重签名")
-                .font(.system(size: 12))
+                .font(.system(size: AppStyle.emptySubtitleSize))
                 .foregroundStyle(.tertiary)
             Button {
                 showingFilePicker = true
@@ -318,7 +318,7 @@ struct ProjectCard: View {
 
                 Button(action: onDelete) {
                     Image(systemName: "trash")
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .frame(width: 28, height: 28)
                         .background(Color.red.opacity(0.08))
                         .foregroundStyle(Color.red.opacity(0.75))
@@ -398,39 +398,39 @@ struct ProjectEditSheet: View {
             VStack(spacing: 14) {
                 HStack {
                     Text("Scheme")
-                        .font(.system(size: 12))
+                        .font(.system(size: AppStyle.fieldSize))
                         .foregroundStyle(.secondary)
-                        .frame(width: 90, alignment: .trailing)
+                        .frame(width: AppStyle.formLabelWidth, alignment: .trailing)
                     Picker("", selection: $project.scheme) {
                         ForEach(schemes.isEmpty ? [project.scheme] : schemes, id: \.self) {
                             Text($0).tag($0)
                         }
                     }
-                    .frame(maxWidth: 220)
+                    .frame(maxWidth: AppStyle.formFieldMaxWidth)
                 }
                 HStack {
                     Text("Configuration")
-                        .font(.system(size: 12))
+                        .font(.system(size: AppStyle.fieldSize))
                         .foregroundStyle(.secondary)
-                        .frame(width: 90, alignment: .trailing)
+                        .frame(width: AppStyle.formLabelWidth, alignment: .trailing)
                     Picker("", selection: $project.configuration) {
                         Text("Debug").tag("Debug")
                         Text("Release").tag("Release")
                     }
-                    .frame(maxWidth: 220)
+                    .frame(maxWidth: AppStyle.formFieldMaxWidth)
                 }
                 HStack(spacing: 6) {
                     Text("开发者 Team")
-                        .font(.system(size: 12))
+                        .font(.system(size: AppStyle.fieldSize))
                         .foregroundStyle(.secondary)
-                        .frame(width: 90, alignment: .trailing)
+                        .frame(width: AppStyle.formLabelWidth, alignment: .trailing)
                     Picker("", selection: $project.teamID) {
                         Text("未指定（跟随项目设置）").tag(String?.none)
                         ForEach(teams) { team in
                             Text(team.displayName).tag(String?.some(team.teamID))
                         }
                     }
-                    .frame(maxWidth: 185)
+                    .frame(maxWidth: AppStyle.formFieldMaxWidth)
                     Button {
                         loadTeams()
                     } label: {
@@ -455,7 +455,7 @@ struct ProjectEditSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("目标设备")
-                            .font(.system(size: 12))
+                            .font(.system(size: AppStyle.fieldSize))
                             .foregroundStyle(.secondary)
                         Spacer()
                         Text(project.deviceUDIDs.isEmpty
@@ -494,9 +494,9 @@ struct ProjectEditSheet: View {
                 }
                 HStack {
                     Text("启用")
-                        .font(.system(size: 12))
+                        .font(.system(size: AppStyle.fieldSize))
                         .foregroundStyle(.secondary)
-                        .frame(width: 90, alignment: .trailing)
+                        .frame(width: AppStyle.formLabelWidth, alignment: .trailing)
                     Toggle("", isOn: $project.isEnabled)
                         .toggleStyle(.switch)
                 }

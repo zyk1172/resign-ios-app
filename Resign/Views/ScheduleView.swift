@@ -11,7 +11,7 @@ struct ScheduleView: View {
                 // Xcode Path Card
                 VStack(alignment: .leading, spacing: 10) {
                     Label("Xcode 路径", systemImage: "hammer")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: AppStyle.cardTitleSize, weight: .semibold))
                     HStack(spacing: 8) {
                         TextField("/Applications/Xcode-beta.app", text: $store.settings.xcodePath)
                             .font(.system(size: 12, design: .monospaced))
@@ -25,19 +25,19 @@ struct ScheduleView: View {
                 // Schedule Card
                 VStack(alignment: .leading, spacing: 12) {
                     Label("定时计划", systemImage: "calendar")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: AppStyle.cardTitleSize, weight: .semibold))
 
                     HStack(spacing: 16) {
                         HStack(spacing: 6) {
                             Text("间隔")
-                                .font(.system(size: 12))
+                                .font(.system(size: AppStyle.fieldSize))
                                 .foregroundStyle(.secondary)
                             Stepper("\(store.settings.resignIntervalDays) 天",
                                     value: $store.settings.resignIntervalDays, in: 1...7)
                         }
                         HStack(spacing: 6) {
                             Text("时间")
-                                .font(.system(size: 12))
+                                .font(.system(size: AppStyle.fieldSize))
                                 .foregroundStyle(.secondary)
                             Picker("", selection: $store.settings.scheduleHour) {
                                 ForEach(0..<24, id: \.self) { h in
@@ -57,17 +57,17 @@ struct ScheduleView: View {
 
                     HStack(spacing: 6) {
                         Text("项目间隔")
-                            .font(.system(size: 12))
+                            .font(.system(size: AppStyle.fieldSize))
                             .foregroundStyle(.secondary)
                         Stepper("\(store.settings.buildCooldownSeconds) 秒",
                                 value: $store.settings.buildCooldownSeconds, in: 0...60)
                         Text("每个项目构建完成后暂停，避免瞬时资源占用过高")
-                            .font(.system(size: 10))
+                            .font(.system(size: AppStyle.microSize))
                             .foregroundStyle(.tertiary)
                     }
 
                     Text("每天在设定时间检查；距离上次成功达到间隔天数后才执行。免费签名建议 ≤ 6 天")
-                        .font(.system(size: 11))
+                        .font(.system(size: AppStyle.captionSize))
                         .foregroundStyle(.orange)
                 }
                 .card()
@@ -75,43 +75,43 @@ struct ScheduleView: View {
                 // Options Card
                 VStack(alignment: .leading, spacing: 10) {
                     Label("选项", systemImage: "gearshape")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: AppStyle.cardTitleSize, weight: .semibold))
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("防止构建时睡眠", isOn: $store.settings.preventSleep)
                         Toggle("完成后通知", isOn: $store.settings.notifyOnComplete)
                         Toggle("启动时自动装载任务", isOn: $store.settings.autoInstallSchedule)
                     }
                     .toggleStyle(.switch)
-                    .font(.system(size: 12))
+                    .font(.system(size: AppStyle.fieldSize))
                 }
                 .card()
 
                 // Retry Card
                 VStack(alignment: .leading, spacing: 10) {
                     Label("失败重试", systemImage: "arrow.clockwise.circle")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: AppStyle.cardTitleSize, weight: .semibold))
                     Toggle("构建失败时自动重试", isOn: $store.settings.enableRetry)
                         .toggleStyle(.switch)
-                        .font(.system(size: 12))
+                        .font(.system(size: AppStyle.fieldSize))
                     if store.settings.enableRetry {
                         HStack(spacing: 16) {
                             HStack(spacing: 6) {
                                 Text("次数")
-                                    .font(.system(size: 12))
+                                    .font(.system(size: AppStyle.fieldSize))
                                     .foregroundStyle(.secondary)
                                 Stepper("\(store.settings.maxRetries) 次",
                                         value: $store.settings.maxRetries, in: 0...3)
                             }
                             HStack(spacing: 6) {
                                 Text("间隔")
-                                    .font(.system(size: 12))
+                                    .font(.system(size: AppStyle.fieldSize))
                                     .foregroundStyle(.secondary)
                                 Stepper("\(store.settings.retryIntervalMinutes) 分钟",
                                         value: $store.settings.retryIntervalMinutes, in: 1...120)
                             }
                         }
                         Text("最多重试 \(store.settings.maxRetries) 次，每次间隔 \(store.settings.retryIntervalMinutes) 分钟")
-                            .font(.system(size: 10))
+                            .font(.system(size: AppStyle.microSize))
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -121,14 +121,14 @@ struct ScheduleView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Label("launchd 任务", systemImage: "clock.badge.checkmark")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: AppStyle.cardTitleSize, weight: .semibold))
                         Spacer()
                         HStack(spacing: 5) {
                             Circle()
                                 .fill(store.isScheduleInstalled ? .green : .red)
                                 .frame(width: 7, height: 7)
                             Text(store.isScheduleInstalled ? "已装载" : "未装载")
-                                .font(.system(size: 11))
+                                .font(.system(size: AppStyle.captionSize))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -141,9 +141,7 @@ struct ScheduleView: View {
                             }
                         } label: {
                             Label("安装 / 更新", systemImage: "calendar.badge.plus")
-                                .font(.system(size: 12, weight: .medium))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
+                                .font(.system(size: AppStyle.captionSize, weight: .medium))
                         }
                         .buttonStyle(.borderedProminent)
 
@@ -153,15 +151,13 @@ struct ScheduleView: View {
                             }
                         } label: {
                             Label("卸载", systemImage: "calendar.badge.minus")
-                                .font(.system(size: 12, weight: .medium))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
+                                .font(.system(size: AppStyle.captionSize, weight: .medium))
                         }
                         .buttonStyle(.bordered)
                     }
 
                     Text(AppStore.scriptURL.path)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: AppStyle.microSize, design: .monospaced))
                         .foregroundStyle(.tertiary)
                         .textSelection(.enabled)
                 }

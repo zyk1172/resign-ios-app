@@ -10,7 +10,7 @@ struct LogsView: View {
             // Header
             HStack {
                 Label("构建记录", systemImage: "terminal")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: AppStyle.cardTitleSize, weight: .semibold))
                 Spacer()
                 if !store.logs.isEmpty {
                     Button(role: .destructive) {
@@ -20,31 +20,31 @@ struct LogsView: View {
                         }
                     } label: {
                         Label("清空", systemImage: "trash")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: AppStyle.captionSize, weight: .medium))
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
                 }
             }
-            .card(padding: 12)
+            .card()
 
             // Log cards
             if store.logs.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 32))
+                        .font(.system(size: AppStyle.emptyIconSize))
                         .foregroundStyle(.tertiary)
                     Text("暂无记录")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: AppStyle.emptyTitleSize, weight: .medium))
                         .foregroundStyle(.secondary)
                     Text("执行构建后记录将显示在这里")
-                        .font(.system(size: 11))
+                        .font(.system(size: AppStyle.emptySubtitleSize))
                         .foregroundStyle(.tertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 8) {
+                    LazyVStack(spacing: AppStyle.listSpacing) {
                         ForEach(store.logs) { entry in
                             LogCard(entry: entry) {
                                 selectedLog = entry
@@ -87,7 +87,7 @@ struct LogCard: View {
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(entry.projectName)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: AppStyle.listTitleSize, weight: .semibold))
                             .lineLimit(1)
                         Text(entry.date.formatted(.dateTime.month(.twoDigits).day().hour().minute().second()))
                             .font(.system(size: 10))
@@ -101,12 +101,12 @@ struct LogCard: View {
                         .foregroundStyle(.secondary)
 
                     Text(entry.status.label)
-                        .font(.system(size: 11, weight: .medium))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
+                        .font(.system(size: AppStyle.captionSize, weight: .medium))
+                        .padding(.horizontal, AppStyle.badgeHPadding)
+                        .padding(.vertical, AppStyle.badgeVPadding)
                         .background(statusColor.opacity(0.1))
                         .foregroundStyle(statusColor)
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        .clipShape(RoundedRectangle(cornerRadius: AppStyle.badgeCornerRadius))
 
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10, weight: .semibold))
@@ -139,7 +139,7 @@ struct LogCard: View {
                     }
                 }
             }
-            .card(padding: 12)
+            .card()
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -177,11 +177,11 @@ struct LogDetailSheet: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 Text(entry.durationText)
-                    .font(.system(size: 11, design: .monospaced))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
+                    .font(.system(size: AppStyle.captionSize, design: .monospaced))
+                    .padding(.horizontal, AppStyle.badgeHPadding)
+                    .padding(.vertical, AppStyle.badgeVPadding)
                     .background(.gray.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .clipShape(RoundedRectangle(cornerRadius: AppStyle.badgeCornerRadius))
                 Button { dismiss() } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 18))
