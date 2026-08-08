@@ -32,6 +32,7 @@ Resign **不适用于**：
 - 从 Xcode 构建设置中准确定位主 App，避免安装旧产物或扩展；
 - 通过 `xcrun devicectl` 安装到一个或多个设备；
 - 支持取消、临时错误重试、防止构建期间睡眠和完成通知；
+- 智能区分"临时故障"与"确定性错误"：设备不在当前 Team 测试列表、免费签名配额已满、Bundle ID 已被其他账号注册、Team 未登录 Xcode 等错误会立即停止并给出可操作的中文诊断，不会盲目等待数十分钟到数小时的重试；
 - 在指定时间每天检查，达到设定间隔后执行自动任务；
 - 将手动和后台任务日志统一显示在 App 中。
 
@@ -134,6 +135,20 @@ LaunchAgent 配置保存在：
 ```
 
 日志可能包含本地项目路径、编译器输出和设备标识，因此不应直接上传到公开 Issue。仓库的忽略规则会排除配置、日志、Provisioning Profile 和常见签名文件。
+
+## 常见错误与诊断
+
+免费开发者账号（Personal Team）有一些限制，Resign 会在日志页直接给出中文提示，常见情况如下：
+
+| 报错特征 | 原因 | 处理办法 |
+| --- | --- | --- |
+| `This provisioning profile cannot be installed on this device` / `0xe8008012` | 当前 Team 的测试设备里没有这台 iPhone/iPad | 用 Xcode 连接该设备并选它运行一次（自动注册设备），或到 Xcode → Settings → Accounts 确认设备已加入该 Apple ID |
+| `MIFreeProfileValidatedAppTracker` / `maximum number of apps for free development profiles` | 免费账号每台设备最多装 3 个 App（App 扩展也占名额） | 卸载该设备上一个免费签名 App，或改用付费开发者账号 |
+| `Failed Registering Bundle Identifier ... not available` | 该 Bundle ID 已被另一个开发者账号注册 | 把项目 Team 改回注册过该 Bundle ID 的账号，或修改 Bundle ID |
+| `No Account for Team "XXXX"` | 所选 Team 的 Apple ID 没有登录 Xcode | 到 Xcode → Settings → Accounts 登录该账号 |
+| `No profiles for ... were found` | 该 Team 下没有匹配的 Provisioning Profile | 在 Xcode 中打开项目让其自动生成 |
+
+免费账号（不付费）的硬性限制：每台设备最多 3 个免费签名 App、每个账号最多注册 3 台测试设备、Profile 7 天过期。**多注册几个 Apple ID 并不能叠加每台设备的 3 个名额**——该限制按设备计算。需要不限数量的安装时，应使用付费的 Apple Developer Program 账号。
 
 ## 安全设计
 

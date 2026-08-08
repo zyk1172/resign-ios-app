@@ -14,6 +14,16 @@ struct BuildResult: Sendable {
     }
 }
 
+/// Classification of a build/install failure for retry decisions.
+enum BuildFailureClass: Equatable {
+    /// Temporary (device offline, network hiccup) - retrying may help.
+    case retryable
+    /// Deterministic (profile missing device, quota full, bundle id taken) - retrying is pointless.
+    case fatal
+    /// Not recognized - conservative default that still allows retry.
+    case unknown
+}
+
 private final class RunningProcess: @unchecked Sendable {
     private let lock = NSLock()
     private var process: Process?
@@ -402,7 +412,11 @@ enum BuildService {
                 buildSucceeded = true
                 break
             }
-            guard isTransientFailure(buildOutput), attempt < attempts else {
+            if failureClass(buildOutput) == .fatal {
+                fullOutput += "\n⚠️ 构建失败为确定性问题（签名/Profile/账号配置），重试不会成功，已停止重试。\n"
+                return BuildResult(success: false, output: fullOutput)
+            }
+            guard attempt < attempts else {
                 return BuildResult(success: false, output: fullOutput)
             }
             fullOutput += "\n检测到临时性构建错误，\(retryDelay) 秒后重试。\n"
@@ -446,6 +460,10 @@ enum BuildService {
                 fullOutput += "\n=== INSTALL \(attempt)/\(attempts) → \(udid) ===\n\(installOutput)\n"
                 if installCode == 0 {
                     installed = true
+                    break
+                }
+                if failureClass(installOutput) == .fatal {
+                    fullOutput += "\n⚠️ 安装失败为确定性问题（如设备不在当前 Team 测试列表 / 免费签名配额已满），已停止对该设备重试。\n"
                     break
                 }
                 if attempt < attempts {
@@ -542,6 +560,33 @@ enum BuildService {
             "could not connect", "developer disk image", "network connection was lost"
         ]
         return transientMarkers.contains { text.contains($0) }
+    }
+
+    /// Classifies a build/install failure. Deterministic errors (profile does
+    /// not include the device, free-profile quota reached, bundle id already
+    /// taken, team not signed in) are returned as `.fatal` so the caller stops
+    /// retrying instead of appearing to hang for minutes/hours.
+    static func failureClass(_ output: String) -> BuildFailureClass {
+        let text = output.lowercased()
+        let fatalMarkers = [
+            "0xe8008012",
+            "provisioning profile cannot be installed on this device",
+            "doesn't include the currently connected device",
+            "is not included in the provisioning profile",
+            "mifreeprofilevalidatedapptracker",
+            "maximum number of apps for free development profiles",
+            "failed registering bundle identifier",
+            "cannot be registered to your development team",
+            "no account for team",
+            "no profiles for"
+        ]
+        if fatalMarkers.contains(where: { text.contains($0) }) {
+            return .fatal
+        }
+        if isTransientFailure(output) {
+            return .retryable
+        }
+        return .unknown
     }
 
     // MARK: - App Icon Loading

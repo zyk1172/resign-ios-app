@@ -122,7 +122,15 @@ struct BuildErrorSummary: Equatable {
 enum BuildErrorParser {
 
     static func summarize(_ output: String) -> BuildErrorSummary? {
+        let text = output.lowercased()
         let lines = output.components(separatedBy: .newlines)
+
+        // 0. Known deterministic failures -> actionable Chinese diagnosis.
+        //    These are the errors users actually hit with free developer
+        //    accounts; a generic "签名 / 安装" label is not enough.
+        if let known = knownFailureSummary(text) {
+            return known
+        }
 
         // 1. First meaningful "error:" line (xcodebuild / clang / swiftc)
         for raw in lines {
@@ -185,6 +193,57 @@ enum BuildErrorParser {
     private static func phase(of output: String) -> String {
         if output.contains("=== INSTALL") { return "安装" }
         return "构建"
+    }
+
+    /// Maps the deterministic failure modes that occur with free Apple
+    /// developer accounts to a concise, actionable diagnosis.
+    private static func knownFailureSummary(_ text: String) -> BuildErrorSummary? {
+        // Device is not in the current team's provisioning profile.
+        if text.contains("0xe8008012")
+            || text.contains("provisioning profile cannot be installed on this device")
+            || text.contains("doesn't include the currently connected device")
+            || text.contains("is not included in the provisioning profile") {
+            return BuildErrorSummary(
+                location: "安装",
+                reason: "这台设备的 UDID 不在当前 Team 的测试设备列表里。请在 Xcode 中连接该设备并选它运行一次（会自动注册），或到 Xcode → Settings → Accounts 确认设备已加入该 Apple ID。"
+            )
+        }
+
+        // Free-development-profile app quota reached on this device.
+        if text.contains("mifreeprofilevalidatedapptracker")
+            || text.contains("maximum number of apps for free development profiles") {
+            return BuildErrorSummary(
+                location: "安装",
+                reason: "免费开发者账号每台设备最多装 3 个 App（App 扩展也占名额）。请先卸载该设备上的一个免费签名 App，或改用付费开发者账号（Apple Developer Program，$99/年）。"
+            )
+        }
+
+        // Bundle identifier already registered by another team / unavailable.
+        if text.contains("failed registering bundle identifier")
+            || (text.contains("cannot be registered to your development team") && text.contains("not available")) {
+            return BuildErrorSummary(
+                location: "签名",
+                reason: "这个 Bundle ID 已被另一个开发者账号注册，当前 Team 无法注册它。请把项目的 Team 改回注册过该 Bundle ID 的账号，或修改 Bundle ID。"
+            )
+        }
+
+        // Team's Apple ID is not signed into Xcode.
+        if text.contains("no account for team") {
+            return BuildErrorSummary(
+                location: "签名",
+                reason: "当前 Team 对应的 Apple ID 没有登录 Xcode。请到 Xcode → Settings → Accounts 登录该账号后重试。"
+            )
+        }
+
+        // No matching provisioning profile for the bundle id / team.
+        if text.contains("no profiles for") {
+            return BuildErrorSummary(
+                location: "签名",
+                reason: "没有找到匹配的 Provisioning Profile。通常是该 Team 下没有对应 Bundle ID 的 App ID，或证书/设备不匹配；可在 Xcode 中打开项目让其自动生成。"
+            )
+        }
+
+        return nil
     }
 }
 

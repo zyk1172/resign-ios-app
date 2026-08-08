@@ -17,7 +17,7 @@ enum ScheduleServiceError: LocalizedError {
 
 enum ScheduleService {
     static let label = "com.resign.auto"
-    static let scheduleVersion = 5
+    static let scheduleVersion = 6
 
     private static var userDomain: String { "gui/\(getuid())" }
 
@@ -196,6 +196,12 @@ enum ScheduleService {
             printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$1" | tee -a "$LOG_FILE"
         }
 
+        # 安装失败是否为确定性问题（重试无意义）：Profile 不含设备 / 免费签名配额已满 / Bundle ID 被占用等
+        is_fatal_install_error() {
+            tail -n 150 "$LOG_FILE" | grep -qiE \
+                '0xe8008012|provisioning profile cannot be installed on this device|does not include|is not included in the provisioning profile|MIFreeProfileValidatedAppTracker|maximum number of apps for free development profiles|Failed Registering Bundle Identifier|cannot be registered to your development team|No Account for Team|No profiles for'
+        }
+
         log '=== Resign 自动任务开始 ==='
 
         DEVICE_UDID=$("$XCRUN" devicectl list devices 2>/dev/null \\
@@ -331,7 +337,8 @@ enum ScheduleService {
 
             PROJECT_OK=0
             ATTEMPT=1
-            while [ "$ATTEMPT" -le \(maxAttempts) ]; do
+            FATAL_ERROR=0
+            while [ "$ATTEMPT" -le \(maxAttempts) ] && [ "$FATAL_ERROR" -eq 0 ]; do
                 ALL_DEVICES_OK=1
                 for TARGET_UDID in "${DEVICE_LIST[@]}"; do
                     log "安装 $PROJECT_NAME → ${TARGET_UDID}（第 ${ATTEMPT}/\(maxAttempts) 次）"
@@ -340,6 +347,10 @@ enum ScheduleService {
                     if [ $? -ne 0 ]; then
                         log "✗ $PROJECT_NAME → ${TARGET_UDID} 安装失败"
                         ALL_DEVICES_OK=0
+                        if is_fatal_install_error; then
+                            log "✗ $PROJECT_NAME → ${TARGET_UDID} 为确定性问题（设备不在 Team 测试列表 / 免费签名配额已满等），不再重试"
+                            FATAL_ERROR=1
+                        fi
                     fi
                 done
 

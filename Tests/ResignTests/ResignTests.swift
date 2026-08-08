@@ -158,4 +158,101 @@ final class ResignTests: XCTestCase {
         XCTAssertFalse(defaultScript.contains("DEVELOPMENT_TEAM="))
     }
 
+
+    // MARK: - Deterministic failure classification & diagnostics (1.3.0)
+
+    func testFailureClassClassifiesDeterministicErrorsAsFatal() {
+        XCTAssertEqual(
+            BuildService.failureClass("Failed to install embedded profile for zhengyk.HabitInsight : 0xe8008012 (This provisioning profile cannot be installed on this device.)"),
+            .fatal
+        )
+        XCTAssertEqual(
+            BuildService.failureClass("FunctionName = -[MIFreeProfileValidatedAppTracker _onQueue_addReferenceForApplicationIdentifier:bundle:error:]"),
+            .fatal
+        )
+        XCTAssertEqual(
+            BuildService.failureClass("The maximum number of apps for free development profiles has been reached"),
+            .fatal
+        )
+        XCTAssertEqual(
+            BuildService.failureClass("error: Failed Registering Bundle Identifier: The app identifier \"zhengyk.HabitInsight\" cannot be registered to your development team because it is not available"),
+            .fatal
+        )
+        XCTAssertEqual(
+            BuildService.failureClass("error: No Account for Team \"9KXSB4HR69\". Add a new account in Accounts settings"),
+            .fatal
+        )
+        XCTAssertEqual(
+            BuildService.failureClass("error: No profiles for 'zhengyk.HabitInsight' were found"),
+            .fatal
+        )
+    }
+
+    func testFailureClassKeepsTransientErrorsRetryable() {
+        XCTAssertEqual(BuildService.failureClass("The network connection was lost"), .retryable)
+        XCTAssertEqual(BuildService.failureClass("Device is locked"), .retryable)
+        XCTAssertEqual(BuildService.failureClass("error: Example.swift:12: type mismatch"), .unknown)
+    }
+
+    func testProfileMissingDeviceErrorSummary() {
+        let summary = BuildErrorParser.summarize(
+            "Failed to install embedded profile for zhengyk.HabitInsight : 0xe8008012 (This provisioning profile cannot be installed on this device.)"
+        )
+        XCTAssertEqual(summary?.location, "安装")
+        XCTAssertTrue(summary?.reason.contains("不在当前 Team 的测试设备列表") == true)
+    }
+
+    func testFreeProfileQuotaErrorSummary() {
+        let summary = BuildErrorParser.summarize(
+            "FunctionName = -[MIFreeProfileValidatedAppTracker _onQueue_addReferenceForApplicationIdentifier:bundle:error:]\n无法安装此App，因为无法验证其完整性。"
+        )
+        XCTAssertEqual(summary?.location, "安装")
+        XCTAssertTrue(summary?.reason.contains("最多装 3 个 App") == true)
+    }
+
+    func testBundleIDUnavailableErrorSummary() {
+        let summary = BuildErrorParser.summarize(
+            "error: Failed Registering Bundle Identifier: The app identifier \"zhengyk.HabitInsight\" cannot be registered to your development team because it is not available. Change your bundle identifier to a unique string to try again"
+        )
+        XCTAssertEqual(summary?.location, "签名")
+        XCTAssertTrue(summary?.reason.contains("已被另一个开发者账号注册") == true)
+    }
+
+    func testNoAccountForTeamErrorSummary() {
+        let summary = BuildErrorParser.summarize(
+            "error: No Account for Team \"9KXSB4HR69\". Add a new account in Accounts settings or verify that your accounts have valid credentials."
+        )
+        XCTAssertEqual(summary?.location, "签名")
+        XCTAssertTrue(summary?.reason.contains("没有登录 Xcode") == true)
+    }
+
+    func testGeneratedScriptStopsRetryingOnFatalInstallError() throws {
+        var settings = AppSettings()
+        settings.xcodePath = "/Applications/Xcode.app"
+        let project = iOSProject(
+            name: "Fatal App",
+            projectPath: "/tmp/Fatal App.xcodeproj",
+            scheme: "Fatal App",
+            teamID: "ABCDE12345",
+            deviceUDIDs: ["00008140-000A6D6A2143801C"]
+        )
+        let script = ScheduleService.scriptText(settings: settings, projects: [project])
+
+        XCTAssertTrue(script.contains("is_fatal_install_error"))
+        XCTAssertTrue(script.contains("FATAL_ERROR=1"))
+        XCTAssertTrue(script.contains("[ \"$FATAL_ERROR\" -eq 0 ]"))
+        XCTAssertTrue(script.contains("不再重试"))
+        XCTAssertTrue(script.contains("# Resign schedule version: 6"))
+
+        let check = Process()
+        check.executableURL = URL(fileURLWithPath: "/bin/bash")
+        check.arguments = ["-n"]
+        let input = Pipe()
+        check.standardInput = input
+        try check.run()
+        input.fileHandleForWriting.write(Data(script.utf8))
+        try input.fileHandleForWriting.close()
+        check.waitUntilExit()
+        XCTAssertEqual(check.terminationStatus, 0)
+    }
 }
