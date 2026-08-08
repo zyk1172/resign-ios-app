@@ -419,37 +419,43 @@ struct ProjectEditSheet: View {
                     }
                     .frame(maxWidth: AppStyle.formFieldMaxWidth)
                 }
-                HStack(spacing: 6) {
-                    Text("开发者 Team")
-                        .font(.system(size: AppStyle.fieldSize))
-                        .foregroundStyle(.secondary)
-                        .frame(width: AppStyle.formLabelWidth, alignment: .trailing)
-                    Picker("", selection: $project.teamID) {
-                        Text("未指定（跟随项目设置）").tag(String?.none)
-                        ForEach(teams) { team in
-                            Text(team.displayName).tag(String?.some(team.teamID))
-                        }
-                    }
-                    .frame(maxWidth: AppStyle.formFieldMaxWidth)
-                    Button {
-                        loadTeams()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.plain)
-                    .help("刷新开发者 Team 列表")
-                }
-                if teams.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 10))
-                        Text("未检测到有效的开发者签名证书，将跟随项目原有设置")
-                            .font(.system(size: 10))
+                        Text("开发者 Team")
+                            .font(.system(size: AppStyle.fieldSize))
+                            .foregroundStyle(.secondary)
+                            .frame(width: AppStyle.formLabelWidth, alignment: .trailing)
+                        TextField("未指定（跟随项目设置）", text: teamTextFieldBinding)
+                            .font(.system(size: 12, design: .monospaced))
+                            .textFieldStyle(.roundedBorder)
                     }
-                    .foregroundStyle(.orange)
-                    .padding(.leading, 96)
-                    .padding(.trailing, 10)
+                    HStack(spacing: 6) {
+                        Color.clear
+                            .frame(width: AppStyle.formLabelWidth)
+                        Picker("", selection: $project.teamID) {
+                            Text("从已登录账号选择…").tag(String?.none)
+                            ForEach(teams) { team in
+                                Text(team.displayName).tag(String?.some(team.teamID))
+                            }
+                        }
+                        .frame(maxWidth: AppStyle.formFieldMaxWidth)
+                        Button {
+                            loadTeams()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.plain)
+                        .help("刷新开发者 Team 列表")
+                        Spacer()
+                    }
+                    Text(teams.isEmpty
+                         ? "未检测到 Xcode 已登录的账号，可手动输入 Team ID（Xcode → Settings → Accounts 查看）"
+                         : "选项来自 Xcode 已登录账号；新登录的账号请点刷新，也可直接在上方输入 Team ID")
+                        .font(.system(size: AppStyle.microSize))
+                        .foregroundStyle(teams.isEmpty ? Color.orange : Color.secondary)
+                        .padding(.leading, AppStyle.formLabelWidth)
+                        .padding(.trailing, 10)
                 }
                 // ── Multi-device selection ──
                 VStack(alignment: .leading, spacing: 8) {
@@ -544,6 +550,13 @@ struct ProjectEditSheet: View {
             let result = await BuildService.listDevelopmentTeams()
             await MainActor.run { teams = result }
         }
+    }
+
+    private var teamTextFieldBinding: Binding<String> {
+        Binding(
+            get: { project.teamID ?? "" },
+            set: { project.teamID = $0.isEmpty ? nil : $0 }
+        )
     }
 
     private func toggleDevice(_ udid: String) {
