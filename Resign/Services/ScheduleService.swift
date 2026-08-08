@@ -17,7 +17,7 @@ enum ScheduleServiceError: LocalizedError {
 
 enum ScheduleService {
     static let label = "com.resign.auto"
-    static let scheduleVersion = 4
+    static let scheduleVersion = 5
 
     private static var userDomain: String { "gui/\(getuid())" }
 
@@ -235,6 +235,8 @@ enum ScheduleService {
 
             script += """
 
+            for _ in once; do
+
             PROJECT_NAME=\(projectName)
             PROJECT_PATH=\(projectPath)
             PROJECT_SCHEME=\(scheme)
@@ -356,6 +358,8 @@ enum ScheduleService {
             if [ "$PROJECT_OK" -ne 1 ]; then
                 RUN_OK=0
             fi
+
+            done
 
             """
 

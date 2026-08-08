@@ -132,6 +132,10 @@ final class ResignTests: XCTestCase {
         let script = ScheduleService.scriptText(settings: settings, projects: [withTeam])
 
         XCTAssertTrue(script.contains("DEVELOPMENT_TEAM='ABCDE12345'"))
+        // Each project block must be wrapped in a single-iteration bash loop so
+        // `continue` skips the rest of the project instead of erroring out.
+        XCTAssertTrue(script.contains("for _ in once; do"))
+        XCTAssertTrue(script.contains("done"))
 
         // The injected signing argument must not break bash syntax.
         let check = Process()

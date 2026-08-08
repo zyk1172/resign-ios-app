@@ -229,21 +229,55 @@ enum BuildService {
 
     // MARK: - List Development Teams
     static func listDevelopmentTeams() async -> [DevelopmentTeam] {
+        var teams: [DevelopmentTeam] = []
+        var seen = Set<String>()
+
+        func append(_ teamID: String, _ displayName: String) {
+            guard !seen.contains(teamID) else { return }
+            seen.insert(teamID)
+            teams.append(DevelopmentTeam(teamID: teamID, displayName: displayName))
+        }
+
+        // 1) Teams whose codesigning certificates are installed in the keychain.
         let (_, output) = await run(
             "/usr/bin/security",
             arguments: ["find-identity", "-v", "-p", "codesigning"]
         )
-
-        var teams: [DevelopmentTeam] = []
-        var seen = Set<String>()
         for line in output.components(separatedBy: .newlines) {
             guard let openQuote = line.range(of: "\""),
                   let closeQuote = line.range(of: "\"", range: openQuote.upperBound..<line.endIndex)
             else { continue }
             let certificateName = String(line[openQuote.upperBound..<closeQuote.lowerBound])
-            guard let teamID = extractTeamID(from: certificateName), !seen.contains(teamID) else { continue }
-            seen.insert(teamID)
-            teams.append(DevelopmentTeam(teamID: teamID, displayName: certificateName))
+            if let teamID = extractTeamID(from: certificateName) {
+                append(teamID, certificateName)
+            }
+        }
+
+        // 2) Teams that Xcode actually uses (from local provisioning profiles),
+        //    so the picker also offers the account configured in the project.
+        let profilesDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Developer/Xcode/UserData/Provisioning Profiles", isDirectory: true)
+        if let files = try? FileManager.default.contentsOfDirectory(
+            at: profilesDir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            for url in files where url.pathExtension == "mobileprovision" {
+                let (_, plistText) = await run(
+                    "/usr/bin/security",
+                    arguments: ["cms", "-D", "-i", url.path]
+                )
+                guard let data = plistText.data(using: .utf8),
+                      let plist = try? PropertyListSerialization.propertyList(
+                        from: data,
+                        options: [],
+                        format: nil
+                      ) as? [String: Any],
+                      let teamID = (plist["TeamIdentifier"] as? [String])?.first,
+                      !teamID.isEmpty
+                else { continue }
+                append(teamID, "Team \(teamID)（Xcode 账号）")
+            }
         }
 
         return teams.sorted {
