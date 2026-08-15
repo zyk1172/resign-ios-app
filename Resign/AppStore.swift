@@ -62,6 +62,28 @@ final class AppStore {
             statusMessage = "配置保存失败：\(error.localizedDescription)"
             showToast(.error, "配置保存失败")
         }
+
+        // Keep the installed LaunchAgent script in sync with the current
+        // projects/settings. The generated script embeds team, devices, scheme,
+        // Xcode path etc.; if it goes stale the background task would keep
+        // building with old values even though the UI shows new ones.
+        syncScheduleIfNeeded()
+    }
+
+    @ObservationIgnored private var lastScheduleSync = Date.distantPast
+
+    private func syncScheduleIfNeeded() {
+        guard scheduleInstalled,
+              settings.autoInstallSchedule,
+              !projects.isEmpty,
+              ScheduleService.needsUpdate(settings: settings, projects: projects)
+        else { return }
+        // Throttle: save() can fire rapidly (e.g. dragging a stepper); avoid
+        // rewriting the script and reloading launchd on every keystroke.
+        let now = Date()
+        guard now.timeIntervalSince(lastScheduleSync) > 5 else { return }
+        lastScheduleSync = now
+        installSchedule()
     }
 
     private func normalizeSettings() {

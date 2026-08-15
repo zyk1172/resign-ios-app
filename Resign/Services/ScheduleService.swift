@@ -17,7 +17,7 @@ enum ScheduleServiceError: LocalizedError {
 
 enum ScheduleService {
     static let label = "com.resign.auto"
-    static let scheduleVersion = 6
+    static let scheduleVersion = 7
 
     private static var userDomain: String { "gui/\(getuid())" }
 
@@ -35,10 +35,23 @@ enum ScheduleService {
         FileManager.default.fileExists(atPath: plistURL.path)
     }
 
-    static func needsUpdate(settings: AppSettings) -> Bool {
-        guard let script = try? String(contentsOf: AppPaths.scriptURL, encoding: .utf8),
-              script.contains("# Resign schedule version: \(scheduleVersion)"),
-              let data = try? Data(contentsOf: plistURL),
+    static func needsUpdate(settings: AppSettings, projects: [iOSProject]) -> Bool {
+        guard let installedScript = try? String(contentsOf: AppPaths.scriptURL, encoding: .utf8),
+              installedScript.contains("# Resign schedule version: \(scheduleVersion)")
+        else {
+            return true
+        }
+
+        // The generated script embeds a full snapshot of projects + settings
+        // (team, devices, scheme, xcode path, retry params, enabled projects).
+        // If it differs from what is installed, the LaunchAgent would keep using
+        // stale values forever, so any divergence means the task must be rebuilt.
+        let expectedScript = scriptText(settings: settings, projects: projects)
+        guard installedScript == expectedScript else {
+            return true
+        }
+
+        guard let data = try? Data(contentsOf: plistURL),
               let object = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
               let plist = object as? [String: Any]
         else {
@@ -204,10 +217,13 @@ enum ScheduleService {
 
         log '=== Resign 自动任务开始 ==='
 
+        # Modern UDIDs look like 00008140-000A6D6A2143801C (8-16) while some
+        # older identifiers use 8-4-4-4-12; accept both instead of parsing
+        # devicectl's human-readable table with a regex that misses the former.
         DEVICE_UDID=$("$XCRUN" devicectl list devices 2>/dev/null \\
             | grep 'physical' \\
             | grep 'available' \\
-            | grep -oiE '[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}' \\
+            | grep -oiE '([0-9a-f]{8}-[0-9a-f]{16}|[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12})' \\
             | head -1 || true)
 
         if [ "$PROJECT_COUNT" -eq 0 ]; then
@@ -288,8 +304,24 @@ enum ScheduleService {
                 CODE_SIGN_STYLE=Automatic \\
                 \(teamSigningArgument)-showBuildSettings -json > "$BUILD_SETTINGS_FILE" 2>> "$LOG_FILE"
 
-            TARGET_BUILD_DIR=$("$PLUTIL" -extract 0.buildSettings.TARGET_BUILD_DIR raw -o - "$BUILD_SETTINGS_FILE" 2>/dev/null || true)
-            WRAPPER_NAME=$("$PLUTIL" -extract 0.buildSettings.WRAPPER_NAME raw -o - "$BUILD_SETTINGS_FILE" 2>/dev/null || true)
+            # Locate the main .app by matching Scheme/project name first, falling
+            # back to the first target. This mirrors BuildService.productPath so
+            # multi-target schemes (Widget/Extension/App Clip) pick the same
+            # product in the GUI and in the background task.
+            TARGET_BUILD_DIR=""
+            WRAPPER_NAME=""
+            for IDX in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+                CAND_WRAPPER=$("$PLUTIL" -extract "$IDX.buildSettings.WRAPPER_NAME" raw -o - "$BUILD_SETTINGS_FILE" 2>/dev/null || true)
+                [ -z "$CAND_WRAPPER" ] && break
+                CAND_DIR=$("$PLUTIL" -extract "$IDX.buildSettings.TARGET_BUILD_DIR" raw -o - "$BUILD_SETTINGS_FILE" 2>/dev/null || true)
+                case "$CAND_WRAPPER" in
+                    "$PROJECT_SCHEME.app"|"$PROJECT_NAME.app")
+                        TARGET_BUILD_DIR="$CAND_DIR"; WRAPPER_NAME="$CAND_WRAPPER"; break ;;
+                esac
+                if [ -z "$WRAPPER_NAME" ]; then
+                    TARGET_BUILD_DIR="$CAND_DIR"; WRAPPER_NAME="$CAND_WRAPPER"
+                fi
+            done
             /bin/rm -f -- "$BUILD_SETTINGS_FILE"
 
             if [ -z "$TARGET_BUILD_DIR" ] || [ -z "$WRAPPER_NAME" ]; then

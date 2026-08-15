@@ -214,7 +214,7 @@ enum BuildErrorParser {
             || text.contains("maximum number of apps for free development profiles") {
             return BuildErrorSummary(
                 location: "安装",
-                reason: "免费开发者账号每台设备最多装 3 个 App（App 扩展也占名额）。请先卸载该设备上的一个免费签名 App，或改用付费开发者账号（Apple Developer Program，$99/年）。"
+                reason: "免费 Personal Team 每台设备最多安装 3 个开发 App；带有 App 扩展的项目还会额外消耗 App ID / provisioning 资源。请先卸载该设备上的一个免费签名 App，或改用付费开发者账号（Apple Developer Program，$99/年）。"
             )
         }
 
@@ -240,6 +240,46 @@ enum BuildErrorParser {
             return BuildErrorSummary(
                 location: "签名",
                 reason: "没有找到匹配的 Provisioning Profile。通常是该 Team 下没有对应 Bundle ID 的 App ID，或证书/设备不匹配；可在 Xcode 中打开项目让其自动生成。"
+            )
+        }
+
+        // Developer mode is disabled on the device (iOS 16+).
+        if text.contains("developer mode is disabled")
+            || text.contains("developer mode has not been enabled")
+            || text.contains("enable developer mode") {
+            return BuildErrorSummary(
+                location: "安装",
+                reason: "这台设备的开发者模式未开启。请到 设置 → 隐私与安全性 → 开发者模式 开启（需要重启设备），然后再试。"
+            )
+        }
+
+        // Signing certificate expired.
+        if text.contains("certificate has expired")
+            || text.contains("certificate expired")
+            || (text.contains("has expired") && text.contains("certificate")) {
+            return BuildErrorSummary(
+                location: "签名",
+                reason: "签名证书已过期。请在 Xcode → Settings → Accounts 中刷新或重新生成证书后重试。"
+            )
+        }
+
+        // Xcode license not accepted / first-launch components missing.
+        if text.contains("xcode license")
+            || text.contains("agree to the license")
+            || text.contains("license agreement") {
+            return BuildErrorSummary(
+                location: "构建",
+                reason: "Xcode 许可协议尚未接受或需要刷新。请打开 Xcode 接受许可协议后重试。"
+            )
+        }
+
+        // Disk full.
+        if text.contains("not enough space")
+            || text.contains("disk full")
+            || text.contains("no space left") {
+            return BuildErrorSummary(
+                location: "构建",
+                reason: "磁盘空间不足，无法完成构建。请清理磁盘空间后重试。"
             )
         }
 

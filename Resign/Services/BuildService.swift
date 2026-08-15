@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 @preconcurrency import UserNotifications
 import AppKit
 
@@ -61,6 +62,51 @@ private actor IconDataCache {
     func insert(_ data: Data, for key: String) { storage[key] = data }
 }
 
+/// Captures a process run with stdout and stderr kept separate.
+///
+/// JSON-producing commands (`xcodebuild -list -json`, `-showBuildSettings -json`,
+/// `devicectl --json-output`) must only parse `stdout`; `xcodebuild` routinely
+/// writes warnings/notes to stderr that would otherwise corrupt the JSON payload.
+struct ProcessResult: Sendable {
+    let exitCode: Int32
+    let stdout: String
+    let stderr: String
+
+    /// Combined output for human-readable logs and error diagnosis.
+    var combined: String {
+        if stderr.isEmpty { return stdout }
+        if stdout.isEmpty { return stderr }
+        return stdout + "\n" + stderr
+    }
+}
+
+/// Cross-process advisory lock so the GUI and the LaunchAgent background task
+/// cannot `rm -rf` the same DerivedData directory while the other is building.
+private final class CrossProcessLock {
+    private var fd: Int32 = -1
+
+    func acquire(at path: String) -> Bool {
+        let descriptor = open(path, O_CREAT | O_RDWR, 0o600)
+        guard descriptor >= 0 else { return false }
+        if flock(descriptor, LOCK_EX | LOCK_NB) == 0 {
+            fd = descriptor
+            return true
+        }
+        close(descriptor)
+        return false
+    }
+
+    func release() {
+        if fd >= 0 {
+            flock(fd, LOCK_UN)
+            close(fd)
+            fd = -1
+        }
+    }
+
+    deinit { release() }
+}
+
 enum BuildService {
 
     // MARK: - Run Process
@@ -69,7 +115,7 @@ enum BuildService {
         arguments: [String],
         environment extra: [String: String] = [:],
         currentDirectory: String? = nil
-    ) async -> (exitCode: Int32, output: String) {
+    ) async -> ProcessResult {
         let runningProcess = RunningProcess()
 
         return await withTaskCancellationHandler {
@@ -87,25 +133,39 @@ enum BuildService {
                         process.currentDirectoryURL = URL(fileURLWithPath: currentDirectory)
                     }
 
-                    let pipe = Pipe()
-                    process.standardOutput = pipe
-                    process.standardError = pipe
+                    let stdoutPipe = Pipe()
+                    let stderrPipe = Pipe()
+                    process.standardOutput = stdoutPipe
+                    process.standardError = stderrPipe
 
                     guard runningProcess.register(process) else {
-                        continuation.resume(returning: (130, "任务已取消"))
+                        continuation.resume(returning: ProcessResult(exitCode: 130, stdout: "", stderr: "任务已取消"))
                         return
                     }
                     defer { runningProcess.clear() }
 
                     do {
                         try process.run()
-                        // A blocking read continuously drains the pipe and avoids a shared Data race.
-                        let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
+                        // Drain stdout and stderr in parallel so a large volume on one
+                        // stream cannot deadlock the other, then join.
+                        var stdoutData = Data()
+                        var stderrData = Data()
+                        let group = DispatchGroup()
+                        DispatchQueue.global().async(group: group) {
+                            stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                        }
+                        DispatchQueue.global().async(group: group) {
+                            stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                        }
+                        group.wait()
                         process.waitUntilExit()
-                        let output = String(data: outputData, encoding: .utf8) ?? ""
-                        continuation.resume(returning: (process.terminationStatus, output))
+                        continuation.resume(returning: ProcessResult(
+                            exitCode: process.terminationStatus,
+                            stdout: String(data: stdoutData, encoding: .utf8) ?? "",
+                            stderr: String(data: stderrData, encoding: .utf8) ?? ""
+                        ))
                     } catch {
-                        continuation.resume(returning: (1, "启动进程失败: \(error.localizedDescription)"))
+                        continuation.resume(returning: ProcessResult(exitCode: 1, stdout: "", stderr: "启动进程失败: \(error.localizedDescription)"))
                     }
                 }
             }
@@ -150,20 +210,20 @@ enum BuildService {
         guard validateXcode(at: xcodePath) == nil else { return [] }
         let isWorkspace = projectPath.hasSuffix(".xcworkspace")
         let flag = isWorkspace ? "-workspace" : "-project"
-        let (code, output) = await run(
+        let result = await run(
             xcodebuildPath(xcodePath: xcodePath),
             arguments: [flag, projectPath, "-list", "-json"],
             environment: environment(xcodePath: xcodePath)
         )
-        guard code == 0 else { return [] }
+        guard result.exitCode == 0 else { return [] }
 
-        if let data = output.data(using: .utf8),
+        if let data = result.stdout.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let project = json["project"] as? [String: Any] ?? json["workspace"] as? [String: Any],
            let schemes = project["schemes"] as? [String] {
             return schemes.filter { !$0.localizedCaseInsensitiveContains("Tests") }
         }
-        return parseSchemesPlainText(output)
+        return parseSchemesPlainText(result.stdout)
     }
 
     private static func parseSchemesPlainText(_ output: String) -> [String] {
@@ -189,13 +249,13 @@ enum BuildService {
             .appendingPathComponent("resign_devices_\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: jsonURL) }
 
-        let (code, _) = await run(
+        let result = await run(
             xcrunPath,
             arguments: ["devicectl", "list", "devices", "--json-output", jsonURL.path],
             environment: environment(xcodePath: xcodePath)
         )
 
-        guard code == 0,
+        guard result.exitCode == 0,
               let data = try? Data(contentsOf: jsonURL),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let result = json["result"] as? [String: Any],
@@ -255,15 +315,15 @@ enum BuildService {
         // 1) Teams of the Apple IDs signed into Xcode (authoritative).
         let xcodePrefs = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Preferences/com.apple.dt.Xcode.plist")
-        let (plistCode, plistText) = await run(
+        let plistResult = await run(
             "/usr/bin/plutil",
             arguments: [
                 "-extract", "IDEProvisioningTeamByIdentifier", "json",
                 "-o", "-", xcodePrefs.path
             ]
         )
-        if plistCode == 0,
-           let data = plistText.data(using: .utf8),
+        if plistResult.exitCode == 0,
+           let data = plistResult.stdout.data(using: .utf8),
            let accounts = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             for (_, value) in accounts {
                 guard let teamList = value as? [[String: Any]] else { continue }
@@ -279,11 +339,11 @@ enum BuildService {
         //    codesigning certificates are installed in the keychain, plus teams
         //    found in local provisioning profiles.
         if teams.isEmpty {
-            let (_, output) = await run(
+            let identityResult = await run(
                 "/usr/bin/security",
                 arguments: ["find-identity", "-v", "-p", "codesigning"]
             )
-            for line in output.components(separatedBy: .newlines) {
+            for line in identityResult.stdout.components(separatedBy: .newlines) {
                 guard let openQuote = line.range(of: "\""),
                       let closeQuote = line.range(of: "\"", range: openQuote.upperBound..<line.endIndex)
                 else { continue }
@@ -301,11 +361,11 @@ enum BuildService {
                 options: [.skipsHiddenFiles]
             ) {
                 for url in files where url.pathExtension == "mobileprovision" {
-                    let (_, profileText) = await run(
+                    let profileResult = await run(
                         "/usr/bin/security",
                         arguments: ["cms", "-D", "-i", url.path]
                     )
-                    guard let data = profileText.data(using: .utf8),
+                    guard let data = profileResult.stdout.data(using: .utf8),
                           let plist = try? PropertyListSerialization.propertyList(
                             from: data,
                             options: [],
@@ -349,6 +409,20 @@ enum BuildService {
         retryIntervalSeconds: Int = 60
     ) async -> BuildResult {
         if Task.isCancelled { return .cancelledResult() }
+
+        // Cross-process lock: the GUI and the LaunchAgent background task share
+        // the same /tmp/ResignBuild/<project UUID> directory and both `rm -rf`
+        // it before building. Without a lock they can tear each other down.
+        let runLock = CrossProcessLock()
+        let lockPath = AppPaths.configDirectory.appendingPathComponent("resign.lock").path
+        guard runLock.acquire(at: lockPath) else {
+            return BuildResult(
+                success: false,
+                output: "已有 Resign 任务正在运行（跨进程锁被占用）。为避免后台任务与手动任务互相踩踏构建目录，本次已跳过。"
+            )
+        }
+        defer { runLock.release() }
+
         if let validationError = validateXcode(at: xcodePath) {
             return BuildResult(success: false, output: validationError)
         }
@@ -389,41 +463,50 @@ enum BuildService {
             environment: environment(xcodePath: xcodePath)
         )
         let expectedProduct = productPath(
-            from: settingsResult.output,
+            from: settingsResult.stdout,
             preferredNames: [project.scheme, project.projectName]
         )
         if settingsResult.exitCode != 0 {
-            fullOutput += "=== BUILD SETTINGS ===\n\(settingsResult.output)\n"
+            fullOutput += "=== BUILD SETTINGS ===\n\(settingsResult.combined)\n"
         }
 
         let attempts = min(max(maxAttempts, 1), 4)
         let retryDelay = min(max(retryIntervalSeconds, 1), 7_200)
         var buildSucceeded = false
         for attempt in 1...attempts {
-            let (buildCode, buildOutput) = await run(
+            let buildResult = await run(
                 xcodebuildPath(xcodePath: xcodePath),
                 arguments: baseArguments + ["build"],
                 environment: environment(xcodePath: xcodePath)
             )
+            let buildOutput = buildResult.combined
             fullOutput += "=== BUILD \(attempt)/\(attempts) ===\n\(buildOutput)\n"
 
             if Task.isCancelled { return .cancelledResult(output: fullOutput + "\n任务已取消") }
-            if buildCode == 0 {
+            if buildResult.exitCode == 0 {
                 buildSucceeded = true
                 break
             }
-            if failureClass(buildOutput) == .fatal {
+            // Retry policy: only explicit transient failures are retried.
+            // Compile/link/script errors and unrecognized failures are
+            // deterministic in practice, so retrying just burns time.
+            switch failureClass(buildOutput) {
+            case .retryable:
+                guard attempt < attempts else {
+                    return BuildResult(success: false, output: fullOutput)
+                }
+                fullOutput += "\n检测到临时性构建错误，\(retryDelay) 秒后重试。\n"
+                do {
+                    try await Task.sleep(for: .seconds(retryDelay))
+                } catch {
+                    return .cancelledResult(output: fullOutput + "\n任务已取消")
+                }
+            case .fatal:
                 fullOutput += "\n⚠️ 构建失败为确定性问题（签名/Profile/账号配置），重试不会成功，已停止重试。\n"
                 return BuildResult(success: false, output: fullOutput)
-            }
-            guard attempt < attempts else {
+            case .unknown:
+                fullOutput += "\n⚠️ 构建失败原因无法识别，为安全起见不再自动重试；请检查日志后手动重试。\n"
                 return BuildResult(success: false, output: fullOutput)
-            }
-            fullOutput += "\n检测到临时性构建错误，\(retryDelay) 秒后重试。\n"
-            do {
-                try await Task.sleep(for: .seconds(retryDelay))
-            } catch {
-                return .cancelledResult(output: fullOutput + "\n任务已取消")
             }
         }
         guard buildSucceeded else {
@@ -452,13 +535,14 @@ enum BuildService {
             var installed = false
             for attempt in 1...attempts {
                 if Task.isCancelled { return .cancelledResult(output: fullOutput + "\n任务已取消") }
-                let (installCode, installOutput) = await run(
+                let installResult = await run(
                     xcrunPath,
                     arguments: ["devicectl", "device", "install", "app", "--device", udid, appPath],
                     environment: environment(xcodePath: xcodePath)
                 )
+                let installOutput = installResult.combined
                 fullOutput += "\n=== INSTALL \(attempt)/\(attempts) → \(udid) ===\n\(installOutput)\n"
-                if installCode == 0 {
+                if installResult.exitCode == 0 {
                     installed = true
                     break
                 }
@@ -557,7 +641,8 @@ enum BuildService {
         let transientMarkers = [
             "timed out", "timeout", "temporarily unavailable", "device is locked",
             "device unavailable", "lost connection", "connection interrupted",
-            "could not connect", "developer disk image", "network connection was lost"
+            "could not connect", "developer disk image", "network connection was lost",
+            "is not paired", "device not paired", "pairing"
         ]
         return transientMarkers.contains { text.contains($0) }
     }
@@ -578,7 +663,14 @@ enum BuildService {
             "failed registering bundle identifier",
             "cannot be registered to your development team",
             "no account for team",
-            "no profiles for"
+            "no profiles for",
+            "developer mode is disabled",
+            "developer mode has not been enabled",
+            "certificate has expired",
+            "certificate expired",
+            "xcode license",
+            "not enough space",
+            "disk full"
         ]
         if fatalMarkers.contains(where: { text.contains($0) }) {
             return .fatal

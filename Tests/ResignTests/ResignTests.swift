@@ -207,7 +207,7 @@ final class ResignTests: XCTestCase {
             "FunctionName = -[MIFreeProfileValidatedAppTracker _onQueue_addReferenceForApplicationIdentifier:bundle:error:]\n无法安装此App，因为无法验证其完整性。"
         )
         XCTAssertEqual(summary?.location, "安装")
-        XCTAssertTrue(summary?.reason.contains("最多装 3 个 App") == true)
+        XCTAssertTrue(summary?.reason.contains("每台设备最多安装 3 个开发 App") == true)
     }
 
     func testBundleIDUnavailableErrorSummary() {
@@ -242,7 +242,7 @@ final class ResignTests: XCTestCase {
         XCTAssertTrue(script.contains("FATAL_ERROR=1"))
         XCTAssertTrue(script.contains("[ \"$FATAL_ERROR\" -eq 0 ]"))
         XCTAssertTrue(script.contains("不再重试"))
-        XCTAssertTrue(script.contains("# Resign schedule version: 6"))
+        XCTAssertTrue(script.contains("# Resign schedule version: 7"))
 
         let check = Process()
         check.executableURL = URL(fileURLWithPath: "/bin/bash")

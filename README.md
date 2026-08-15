@@ -143,7 +143,7 @@ LaunchAgent 配置保存在：
 | 报错特征 | 原因 | 处理办法 |
 | --- | --- | --- |
 | `This provisioning profile cannot be installed on this device` / `0xe8008012` | 当前 Team 的测试设备里没有这台 iPhone/iPad | 用 Xcode 连接该设备并选它运行一次（自动注册设备），或到 Xcode → Settings → Accounts 确认设备已加入该 Apple ID |
-| `MIFreeProfileValidatedAppTracker` / `maximum number of apps for free development profiles` | 免费账号每台设备最多装 3 个 App（App 扩展也占名额） | 卸载该设备上一个免费签名 App，或改用付费开发者账号 |
+| `MIFreeProfileValidatedAppTracker` / `maximum number of apps for free development profiles` | 免费 Personal Team 每台设备最多装 3 个开发 App（带扩展的项目还会额外消耗 App ID / provisioning 资源） | 卸载该设备上一个免费签名 App，或改用付费开发者账号 |
 | `Failed Registering Bundle Identifier ... not available` | 该 Bundle ID 已被另一个开发者账号注册 | 把项目 Team 改回注册过该 Bundle ID 的账号，或修改 Bundle ID |
 | `No Account for Team "XXXX"` | 所选 Team 的 Apple ID 没有登录 Xcode | 到 Xcode → Settings → Accounts 登录该账号 |
 | `No profiles for ... were found` | 该 Team 下没有匹配的 Provisioning Profile | 在 Xcode 中打开项目让其自动生成 |
