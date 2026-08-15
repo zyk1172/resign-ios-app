@@ -89,6 +89,10 @@ struct BuildLogEntry: Identifiable, Codable, Hashable {
     var failedDevices: [String]? = nil
     /// Stable identifier for imported background-run logs.
     var sourceIdentifier: String? = nil
+    /// File name (under AppPaths.logDirectory) that holds the full raw log.
+    /// Empty means `output` already contains the full text. Keeps large
+    /// xcodebuild logs out of config.json.
+    var logFile: String? = nil
 
     var durationText: String {
         let m = Int(durationSeconds) / 60

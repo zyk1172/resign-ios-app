@@ -221,7 +221,7 @@ struct LogDetailSheet: View {
 
             // Full raw output (collapsible)
             ScrollView {
-                Text(entry.output)
+                Text(displayOutput)
                     .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -230,5 +230,13 @@ struct LogDetailSheet: View {
             .background(Color(nsColor: .textBackgroundColor))
         }
         .frame(width: 600, height: 420)
+    }
+
+    /// Full log text: if the entry was externalized to a file under logs/,
+    /// load it from disk; otherwise the summary in `output` is the full text.
+    private var displayOutput: String {
+        guard let logFile = entry.logFile, !logFile.isEmpty else { return entry.output }
+        let url = AppPaths.logDirectory.appendingPathComponent(logFile)
+        return (try? String(contentsOf: url, encoding: .utf8)) ?? "日志文件不可读：\(logFile)"
     }
 }

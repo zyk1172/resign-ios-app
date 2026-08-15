@@ -267,14 +267,16 @@ final class AppStore {
             devices.first { $0.udid == udid }?.name ?? String(udid.prefix(8))
         }
         let status: BuildStatus = result.cancelled ? .cancelled : (result.success ? .success : .failed)
+        let (logFile, storedOutput) = Self.storeLogOutput(result.output, date: start)
         logs.insert(
             BuildLogEntry(
                 date: start,
                 projectName: project.name,
                 status: status,
-                output: result.output,
+                output: storedOutput,
                 durationSeconds: duration,
-                failedDevices: failedNames.isEmpty ? nil : failedNames
+                failedDevices: failedNames.isEmpty ? nil : failedNames,
+                logFile: logFile
             ),
             at: 0
         )
@@ -339,6 +341,35 @@ final class AppStore {
             trimLogs()
             if saveAfterImport { save() }
         }
+    }
+
+    /// Logs larger than this are written to a separate file under logs/ and
+    /// only a head+tail summary is kept in config.json, so the config never
+    /// grows into tens of MB. Keeps the tail because that is where build/install
+    /// errors appear (used by BuildErrorParser for the "问题定位" summary).
+    private static let logInlineThreshold = 64 * 1024
+
+    private static func storeLogOutput(_ raw: String, date: Date) -> (String?, String) {
+        guard raw.count > logInlineThreshold else { return (nil, raw) }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        let name = "build_\(formatter.string(from: date))_\(UUID().uuidString.prefix(8)).log"
+        let url = AppPaths.logDirectory.appendingPathComponent(name)
+        do {
+            try raw.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            return (nil, raw)
+        }
+        let head = String(raw.prefix(4_000))
+        var summary = head
+        if raw.count > 8_000 {
+            let tail = String(raw.suffix(4_000))
+            summary += "\n…（中部省略，完整日志见 logs/\(name)）\n" + tail
+        } else {
+            summary += "\n…（完整日志见 logs/\(name)）"
+        }
+        return (name, summary)
     }
 
     private func trimLogs() {

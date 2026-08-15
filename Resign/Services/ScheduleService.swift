@@ -17,7 +17,7 @@ enum ScheduleServiceError: LocalizedError {
 
 enum ScheduleService {
     static let label = "com.resign.auto"
-    static let scheduleVersion = 7
+    static let scheduleVersion = 8
 
     private static var userDomain: String { "gui/\(getuid())" }
 
@@ -161,6 +161,7 @@ enum ScheduleService {
         let xcodebuild = settings.xcodePath + "/Contents/Developer/usr/bin/xcodebuild"
         let logDirectory = AppPaths.logDirectory.path
         let lastSuccessFile = AppPaths.lastScheduledSuccessURL.path
+        let stateDirectory = AppPaths.scheduledStateDirectory.path
         let enabled = projects.filter { $0.isEnabled && !$0.projectPath.isEmpty }
         let retryCount = min(max(settings.maxRetries, 0), 3)
         let maxAttempts = settings.enableRetry ? 1 + retryCount : 1
@@ -181,24 +182,13 @@ enum ScheduleService {
         PLUTIL='/usr/bin/plutil'
         LOG_DIR=\(shellQuote(logDirectory))
         LAST_SUCCESS_FILE=\(shellQuote(lastSuccessFile))
+        LAST_SUCCESS_DIR=\(shellQuote(stateDirectory))
         INTERVAL_DAYS=\(intervalDays)
         PREVENT_SLEEP=\(settings.preventSleep ? 1 : 0)
         NOTIFY_ON_COMPLETE=\(settings.notifyOnComplete ? 1 : 0)
         PROJECT_COUNT=\(enabled.count)
 
-        mkdir -p "$LOG_DIR"
-
-        now_epoch=$(date '+%s')
-        if [ -f "$LAST_SUCCESS_FILE" ]; then
-            last_epoch=$(tr -dc '0-9' < "$LAST_SUCCESS_FILE")
-            if [ -n "$last_epoch" ]; then
-                due_day=$(date -r "$last_epoch" -v+"${INTERVAL_DAYS}"d '+%Y%m%d' 2>/dev/null || true)
-                today=$(date '+%Y%m%d')
-                if [[ "$due_day" =~ ^[0-9]{8}$ ]] && [ "$today" -lt "$due_day" ]; then
-                    exit 0
-                fi
-            fi
-        fi
+        mkdir -p "$LOG_DIR" "$LAST_SUCCESS_DIR"
 
         timestamp=$(date '+%Y%m%d_%H%M%S')
         LOG_FILE="$LOG_DIR/resign_$timestamp.log"
@@ -268,6 +258,27 @@ enum ScheduleService {
             \(deviceSetup)
 
             log "项目：$PROJECT_NAME"
+
+            # Per-project expiry: only rebuild projects whose last successful
+            # run is older than INTERVAL_DAYS. A project that failed keeps its
+            # old timestamp, so it is retried on the next scheduled run while
+            # healthy projects are not rebuilt unnecessarily.
+            PROJECT_LAST_SUCCESS="$LAST_SUCCESS_DIR/${PROJECT_ID}.epoch"
+            PROJECT_DUE=1
+            if [ -f "$PROJECT_LAST_SUCCESS" ]; then
+                last_epoch=$(tr -dc '0-9' < "$PROJECT_LAST_SUCCESS")
+                if [ -n "$last_epoch" ]; then
+                    due_day=$(date -r "$last_epoch" -v+"${INTERVAL_DAYS}"d '+%Y%m%d' 2>/dev/null || true)
+                    today=$(date '+%Y%m%d')
+                    if [[ "$due_day" =~ ^[0-9]{8}$ ]] && [ "$today" -lt "$due_day" ]; then
+                        PROJECT_DUE=0
+                    fi
+                fi
+            fi
+            if [ "$PROJECT_DUE" -eq 0 ]; then
+                log "项目 $PROJECT_NAME 尚未到期（距上次成功不足 ${INTERVAL_DAYS} 天），跳过"
+                continue
+            fi
 
             if [ -z "$PROJECT_SCHEME" ]; then
                 log "✗ $PROJECT_NAME 未设置 Scheme"
@@ -388,6 +399,7 @@ enum ScheduleService {
 
                 if [ "$ALL_DEVICES_OK" -eq 1 ]; then
                     PROJECT_OK=1
+                    date '+%s' > "$PROJECT_LAST_SUCCESS"
                     log "✓ $PROJECT_NAME 全部安装成功"
                     break
                 fi

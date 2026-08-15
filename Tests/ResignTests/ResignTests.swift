@@ -242,7 +242,7 @@ final class ResignTests: XCTestCase {
         XCTAssertTrue(script.contains("FATAL_ERROR=1"))
         XCTAssertTrue(script.contains("[ \"$FATAL_ERROR\" -eq 0 ]"))
         XCTAssertTrue(script.contains("不再重试"))
-        XCTAssertTrue(script.contains("# Resign schedule version: 7"))
+        XCTAssertTrue(script.contains("# Resign schedule version: 8"))
 
         let check = Process()
         check.executableURL = URL(fileURLWithPath: "/bin/bash")
