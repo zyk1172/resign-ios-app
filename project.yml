@@ -45,3 +45,22 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.resign.app.tests
+
+# Shared scheme: 让 Codex / CI 无需打开 Xcode 即可 build/test/archive
+schemes:
+  Resign:
+    build:
+      targets:
+        Resign: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - ResignTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
