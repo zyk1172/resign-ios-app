@@ -11,18 +11,25 @@ struct BuildRequest: Sendable {
     /// tests can use zero-interval retries.
     var retryPolicyOverride: RetryPolicy?
 
+    /// Explicit device UDIDs for this run (e.g. the "push to this device"
+    /// action). nil = default selection rule (project list, else first
+    /// available device).
+    var deviceOverride: [String]?
+
     init(
         project: iOSProject,
         settings: AppSettings,
         availableDevices: [iOSDevice],
         source: ExecutionSource,
-        retryPolicyOverride: RetryPolicy? = nil
+        retryPolicyOverride: RetryPolicy? = nil,
+        deviceOverride: [String]? = nil
     ) {
         self.project = project
         self.settings = settings
         self.availableDevices = availableDevices
         self.source = source
         self.retryPolicyOverride = retryPolicyOverride
+        self.deviceOverride = deviceOverride
     }
 }
 
@@ -49,6 +56,14 @@ struct BuildCoordinator: Sendable {
     var derivedDataRoot: URL = URL(fileURLWithPath: "/tmp/ResignBuild", isDirectory: true)
     /// Cross-process lock guarding the build area. Both entry points share it.
     var buildLockPath: String = AppPaths.buildLockURL.path
+    /// Where macOS projects get installed (injectable for tests).
+    var macInstallDirectory: URL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+
+    /// Where a finished run installs: paired devices (iOS) or this Mac (macOS).
+    private enum InstallPlan: Sendable {
+        case devices([String])
+        case localMac
+    }
 
     func execute(_ request: BuildRequest) async -> BuildResult {
         let project = request.project
@@ -77,12 +92,19 @@ struct BuildCoordinator: Sendable {
             return BuildResult(success: false, output: "错误：项目路径不存在：\(project.projectPath)")
         }
 
-        let deviceUDIDs = DeviceSelection.resolveDeviceUDIDs(
-            projectUDIDs: project.deviceUDIDs,
-            availableDevices: request.availableDevices
-        )
-        guard !deviceUDIDs.isEmpty else {
-            return BuildResult(success: false, output: "错误：未找到可用的已连接设备")
+        let installPlan: InstallPlan
+        switch project.platform {
+        case .macos:
+            installPlan = .localMac
+        case .ios:
+            let deviceUDIDs = request.deviceOverride ?? DeviceSelection.resolveDeviceUDIDs(
+                projectUDIDs: project.deviceUDIDs,
+                availableDevices: request.availableDevices
+            )
+            guard !deviceUDIDs.isEmpty else {
+                return BuildResult(success: false, output: "错误：未找到可用的已连接设备")
+            }
+            installPlan = .devices(deviceUDIDs)
         }
 
         let derivedData = derivedDataRoot.appendingPathComponent(project.id.uuidString, isDirectory: true)
@@ -140,10 +162,17 @@ struct BuildCoordinator: Sendable {
         if let expectedProduct, FileManager.default.fileExists(atPath: expectedProduct) {
             appPath = expectedProduct
         } else {
+            // macOS products live in Build/Products/<Config>; iOS adds -iphoneos.
+            let productsDirectory = derivedData
+                .appendingPathComponent("Build/Products", isDirectory: true)
+                .appendingPathComponent(
+                    project.platform == .macos
+                        ? project.configuration
+                        : "\(project.configuration)-iphoneos",
+                    isDirectory: true
+                )
             appPath = ProductResolver.mainApp(
-                in: derivedData
-                    .appendingPathComponent("Build/Products", isDirectory: true)
-                    .appendingPathComponent("\(project.configuration)-iphoneos", isDirectory: true),
+                in: productsDirectory,
                 preferredNames: [project.scheme, project.projectName]
             )
         }
@@ -154,25 +183,38 @@ struct BuildCoordinator: Sendable {
         }
         fullOutput += "\n本次产物: \(appPath)\n"
 
-        let installer = AppInstaller(runner: runner)
-        let outcomes = await installer.install(
-            appPath: appPath,
-            deviceUDIDs: deviceUDIDs,
-            xcodePath: request.settings.xcodePath,
-            retry: retry
-        )
-        for outcome in outcomes {
-            fullOutput += outcome.output
-        }
-        if Task.isCancelled { return .cancelledResult(output: fullOutput + "\n任务已取消") }
+        switch installPlan {
+        case .localMac:
+            let installer = MacAppInstaller(
+                runner: runner,
+                applicationsDirectory: macInstallDirectory
+            )
+            let outcome = await installer.install(appPath: appPath)
+            fullOutput += "\n=== INSTALL (macOS) ===\n\(outcome.output)\n"
+            if Task.isCancelled { return .cancelledResult(output: fullOutput + "\n任务已取消") }
+            return BuildResult(success: outcome.success, output: fullOutput)
 
-        let failedUDIDs = outcomes.filter { !$0.success }.map(\.udid)
-        return BuildResult(
-            success: failedUDIDs.isEmpty,
-            output: fullOutput,
-            failedDeviceUDIDs: failedUDIDs,
-            deviceOutcomes: outcomes
-        )
+        case .devices(let deviceUDIDs):
+            let installer = AppInstaller(runner: runner)
+            let outcomes = await installer.install(
+                appPath: appPath,
+                deviceUDIDs: deviceUDIDs,
+                xcodePath: request.settings.xcodePath,
+                retry: retry
+            )
+            for outcome in outcomes {
+                fullOutput += outcome.output
+            }
+            if Task.isCancelled { return .cancelledResult(output: fullOutput + "\n任务已取消") }
+
+            let failedUDIDs = outcomes.filter { !$0.success }.map(\.udid)
+            return BuildResult(
+                success: failedUDIDs.isEmpty,
+                output: fullOutput,
+                failedDeviceUDIDs: failedUDIDs,
+                deviceOutcomes: outcomes
+            )
+        }
     }
 
     /// Clears and recreates a per-project derived-data directory. Deletion is

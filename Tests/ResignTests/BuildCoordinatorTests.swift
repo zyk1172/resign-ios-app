@@ -37,10 +37,12 @@ final class BuildCoordinatorTests: XCTestCase {
 
     private func makeProject(
         scheme: String = "Demo",
+        platform: ProjectPlatform = .ios,
         teamID: String? = nil,
         deviceUDIDs: [String] = []
     ) -> iOSProject {
         var project = iOSProject(name: "Demo", projectPath: projectPath, scheme: scheme)
+        project.platform = platform
         project.teamID = teamID
         project.deviceUDIDs = deviceUDIDs
         return project
@@ -262,6 +264,107 @@ final class BuildCoordinatorTests: XCTestCase {
         XCTAssertFalse(result.success)
         XCTAssertEqual(result.failedDeviceUDIDs, ["D2"])
         XCTAssertEqual(runner.calls(to: "xcrun").filter { $0.arguments.contains("D2") }.count, 1, "fatal 设备停止重试")
+    }
+
+    func testDeviceOverrideBypassesDefaultSelection() async throws {
+        let runner = MockProcessRunner()
+        createApp("Demo.app")
+        runner.enqueue(buildSettingsJSON(targets: [("Demo", "Demo.app")]))
+        runner.enqueue(makeProcessResult(exitCode: 0, stdout: "BUILD SUCCEEDED"))
+        runner.enqueue(makeProcessResult(exitCode: 0))
+
+        // Project has no saved devices and only D1 is available; the explicit
+        // "push to this device" target D2 must win over both rules.
+        let onlyD1 = [iOSDevice(udid: "D1", name: "iPhone", osVersion: "18.0", connectionType: "USB", isAvailable: true)]
+        var request = makeRequest(project: makeProject(), devices: onlyD1)
+        request.deviceOverride = ["D2"]
+
+        let result = await makeCoordinator(runner: runner).execute(request)
+
+        XCTAssertTrue(result.success)
+        let installCalls = runner.calls(to: "xcrun")
+        XCTAssertEqual(installCalls.count, 1)
+        XCTAssertTrue(installCalls[0].arguments.contains("D2"))
+        XCTAssertFalse(installCalls[0].arguments.contains("D1"))
+    }
+
+    // MARK: - macOS platform
+
+    func testMacOSProjectBuildsForMacAndInstallsIntoApplications() async throws {
+        let runner = MockProcessRunner()
+        let macApplications = root.appendingPathComponent("Applications", isDirectory: true)
+        try FileManager.default.createDirectory(at: macApplications, withIntermediateDirectories: true)
+
+        let productsDir = root.appendingPathComponent("macproducts", isDirectory: true)
+        try FileManager.default.createDirectory(at: productsDir.appendingPathComponent("Demo.app/Contents/MacOS"), withIntermediateDirectories: true)
+        try Data("binary".utf8).write(to: productsDir.appendingPathComponent("Demo.app/Contents/MacOS/Demo"))
+
+        runner.enqueue(makeProcessResult(exitCode: 0, stdout: String(
+            data: try! JSONSerialization.data(withJSONObject: [[
+                "target": "Demo",
+                "buildSettings": [
+                    "TARGET_BUILD_DIR": productsDir.path,
+                    "WRAPPER_NAME": "Demo.app"
+                ]
+            ]]),
+            encoding: .utf8)!
+        ))
+        runner.enqueue(makeProcessResult(exitCode: 0, stdout: "BUILD SUCCEEDED")) // build
+        runner.enqueue(makeProcessResult(exitCode: 1))                            // pgrep: not running
+        // ditto + codesign verify use the success default
+
+        var coordinator = makeCoordinator(runner: runner)
+        coordinator.macInstallDirectory = macApplications
+        let result = await coordinator.execute(makeRequest(project: makeProject(platform: .macos)))
+
+        XCTAssertTrue(result.success, result.output)
+        XCTAssertTrue(result.output.contains("已安装到"))
+
+        let xcodebuildCalls = runner.calls(to: "xcodebuild")
+        XCTAssertEqual(xcodebuildCalls.count, 2)
+        XCTAssertTrue(xcodebuildCalls[0].arguments.contains("platform=macOS"), "macOS 项目必须用 macOS destination")
+        XCTAssertTrue(runner.calls(to: "xcrun").isEmpty, "macOS 项目不应调用 devicectl")
+
+        let installed = macApplications.appendingPathComponent("Demo.app/Contents/MacOS/Demo")
+        XCTAssertEqual(try? String(contentsOf: installed, encoding: .utf8), "binary")
+    }
+
+    func testMacOSInstallSignatureFailureKeepsExistingApp() async throws {
+        let runner = MockProcessRunner()
+        let macApplications = root.appendingPathComponent("Applications", isDirectory: true)
+        try FileManager.default.createDirectory(at: macApplications.appendingPathComponent("Demo.app"), withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: macApplications.appendingPathComponent("Demo.app/marker"))
+
+        // Built product exists so resolution succeeds and install proceeds.
+        let productsDir = root.appendingPathComponent("macproducts", isDirectory: true)
+        try FileManager.default.createDirectory(at: productsDir.appendingPathComponent("Demo.app"), withIntermediateDirectories: true)
+        let settingsJSON = String(
+            data: try! JSONSerialization.data(withJSONObject: [[
+                "target": "Demo",
+                "buildSettings": [
+                    "TARGET_BUILD_DIR": productsDir.path,
+                    "WRAPPER_NAME": "Demo.app"
+                ]
+            ]]),
+            encoding: .utf8)!
+        runner.enqueue(makeProcessResult(exitCode: 0, stdout: settingsJSON)) // build settings
+        runner.enqueue(makeProcessResult(exitCode: 0))                       // build
+        runner.enqueue(makeProcessResult(exitCode: 1))                       // pgrep: not running
+        runner.enqueue(makeProcessResult(exitCode: 1, stderr: "invalid signature")) // codesign verify fails
+
+        var coordinator = makeCoordinator(runner: runner)
+        coordinator.macInstallDirectory = macApplications
+        let result = await coordinator.execute(makeRequest(project: makeProject(platform: .macos)))
+
+        XCTAssertFalse(result.success)
+        XCTAssertTrue(result.output.contains("签名校验失败"))
+        XCTAssertEqual(
+            try? String(contentsOf: macApplications.appendingPathComponent("Demo.app/marker"), encoding: .utf8),
+            "old",
+            "验签失败时现有安装必须原样保留"
+        )
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: macApplications.path)
+            .allSatisfy { !$0.hasPrefix(".") }, "暂存目录必须被清理")
     }
 
     // MARK: - Validation & lock

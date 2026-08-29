@@ -103,6 +103,9 @@ struct ProjectsView: View {
                             project: project,
                             onEdit: { editingProject = project },
                             onBuild: { store.startBuildSingle(project) },
+                            onPushToDevice: { udid in
+                                store.startBuildSingle(project, toDevice: udid)
+                            },
                             onDelete: {
                                 withAnimation(.snappy(duration: 0.25)) {
                                     store.removeProject(project)
@@ -170,10 +173,12 @@ struct ProjectCard: View {
     let project: iOSProject
     let onEdit: () -> Void
     let onBuild: () -> Void
+    let onPushToDevice: (String) -> Void
     let onDelete: () -> Void
     @Environment(AppStore.self) private var store
     @State private var isHovered = false
     @State private var appIcon: NSImage?
+    @State private var showingDevicePicker = false
 
     /// Card accent color driven by last build status
     private var statusColor: Color {
@@ -274,14 +279,15 @@ struct ProjectCard: View {
 
             Spacer(minLength: 8)
 
-            // ── Footer: devices + last build ──
+            // ── Footer: destination + last build ──
             VStack(spacing: 3) {
                 HStack(spacing: 4) {
-                    Image(systemName: "iphone")
+                    Image(systemName: project.platform == .macos
+                          ? "desktopcomputer" : "iphone")
                         .font(.system(size: 9))
-                    Text(project.deviceUDIDs.isEmpty
-                         ? "自动选择设备"
-                         : "\(project.deviceUDIDs.count) 台设备")
+                    Text(project.platform == .macos
+                         ? "安装到本机 /Applications"
+                         : (project.deviceUDIDs.isEmpty ? "自动选择设备" : "\(project.deviceUDIDs.count) 台设备"))
                         .font(.system(size: 9, weight: .medium))
                 }
                 .foregroundStyle(.secondary)
@@ -305,7 +311,28 @@ struct ProjectCard: View {
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                 }
                 .buttonStyle(.plain)
-                .help("立即构建")
+                .help(project.platform == .macos ? "构建并安装到本机" : "立即构建（按项目默认设备）")
+
+                if project.platform == .ios {
+                    Button {
+                        showingDevicePicker = true
+                    } label: {
+                        Image(systemName: "iphone.radiowaves.left.and.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 28, height: 28)
+                            .background(Color.blue.opacity(0.12))
+                            .foregroundStyle(Color.blue)
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                    }
+                    .buttonStyle(.plain)
+                    .help("推送到指定设备")
+                    .popover(isPresented: $showingDevicePicker, arrowEdge: .bottom) {
+                        DeviceQuickPicker(project: project) { udid in
+                            showingDevicePicker = false
+                            onPushToDevice(udid)
+                        }
+                    }
+                }
 
                 Button(action: onEdit) {
                     Image(systemName: "gearshape")
@@ -368,6 +395,139 @@ struct ProjectCard: View {
     }
 }
 
+// MARK: - Device Quick Picker (popover for "push to a specific device")
+struct DeviceQuickPicker: View {
+    let project: iOSProject
+    let onPick: (String) -> Void
+    @Environment(AppStore.self) private var store
+    @State private var hoveredUDID: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Image(systemName: "iphone.radiowaves.left.and.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.blue)
+                    Text("推送到设备")
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    Text(project.name)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Text(store.isBuilding
+                     ? "构建进行中，请稍候…"
+                     : "本次构建并安装到所选设备，不改变项目默认设置")
+                    .font(.system(size: 10))
+                    .foregroundStyle(store.isBuilding ? Color.orange : Color.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 9)
+
+            Divider()
+
+            // Device list
+            if store.devices.isEmpty {
+                VStack(spacing: 7) {
+                    Image(systemName: "iphone.slash")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.tertiary)
+                    Text("未检测到设备")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Text("连接 iPhone 并信任此电脑后，在设备页刷新")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 22)
+            } else {
+                ScrollView {
+                    VStack(spacing: 4) {
+                        ForEach(store.devices) { device in
+                            pickerRow(device)
+                        }
+                    }
+                    .padding(8)
+                }
+                .frame(maxHeight: 248)
+            }
+        }
+        .frame(width: 252)
+    }
+
+    private func pickerRow(_ device: iOSDevice) -> some View {
+        let isHovered = hoveredUDID == device.udid
+        let isProjectDefault = project.deviceUDIDs.contains(device.udid)
+        return Button {
+            onPick(device.udid)
+        } label: {
+            HStack(spacing: 9) {
+                Circle()
+                    .fill(device.isAvailable ? Color.green : Color.orange)
+                    .frame(width: 7, height: 7)
+                    .shadow(color: (device.isAvailable ? Color.green : Color.orange).opacity(0.4), radius: 2.5)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(device.name)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                        if isProjectDefault {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.blue)
+                                .help("项目默认目标设备")
+                        }
+                    }
+                    Text(device.osVersion.isEmpty
+                         ? device.connectionType
+                         : "iOS \(device.osVersion) · \(device.connectionType)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+
+                Spacer()
+
+                if device.isAvailable {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(isHovered ? Color.blue : Color.blue.opacity(0.30))
+                        .scaleEffect(isHovered ? 1.08 : 1.0)
+                        .animation(.spring(response: 0.22, dampingFraction: 0.7), value: isHovered)
+                } else {
+                    Text("未连接")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .background {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(isHovered && device.isAvailable ? Color.blue.opacity(0.08) : Color.clear)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!device.isAvailable || store.isBuilding)
+        .opacity(device.isAvailable ? 1 : 0.55)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.12)) {
+                if hovering {
+                    hoveredUDID = device.udid
+                } else if hoveredUDID == device.udid {
+                    hoveredUDID = nil
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Edit Sheet
 struct ProjectEditSheet: View {
     @State var project: iOSProject
@@ -420,6 +580,18 @@ struct ProjectEditSheet: View {
                     }
                     .frame(maxWidth: AppStyle.formFieldMaxWidth)
                 }
+                HStack {
+                    Text("平台")
+                        .font(.system(size: AppStyle.fieldSize))
+                        .foregroundStyle(.secondary)
+                        .frame(width: AppStyle.formLabelWidth, alignment: .trailing)
+                    Picker("", selection: $project.platform) {
+                        Text("iOS / iPadOS").tag(ProjectPlatform.ios)
+                        Text("macOS（本机）").tag(ProjectPlatform.macos)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: AppStyle.formFieldMaxWidth + 40)
+                }
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
                         Text("开发者 Team")
@@ -458,46 +630,67 @@ struct ProjectEditSheet: View {
                         .padding(.leading, AppStyle.formLabelWidth)
                         .padding(.trailing, 10)
                 }
-                // ── Multi-device selection ──
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("目标设备")
-                            .font(.system(size: AppStyle.fieldSize))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text(project.deviceUDIDs.isEmpty
-                             ? "未选择 = 自动选第一台"
-                             : "已选 \(project.deviceUDIDs.count) 台")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                    }
-
-                    if store.devices.isEmpty {
-                        HStack(spacing: 6) {
-                            Image(systemName: "exclamationmark.triangle")
-                                .font(.system(size: 11))
-                            Text("未检测到设备，请先在“设备”页刷新")
-                                .font(.system(size: 11))
+                // ── Destination: device selection (iOS) or local install note ──
+                if project.platform == .ios {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("目标设备")
+                                .font(.system(size: AppStyle.fieldSize))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(project.deviceUDIDs.isEmpty
+                                 ? "未选择 = 自动选第一台"
+                                 : "已选 \(project.deviceUDIDs.count) 台")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
                         }
-                        .foregroundStyle(.orange)
-                        .padding(.vertical, 4)
-                    } else {
-                        VStack(spacing: 6) {
-                            ForEach(store.devices) { device in
-                                DeviceCheckRow(
-                                    device: device,
-                                    isSelected: project.deviceUDIDs.contains(device.udid)
-                                ) {
-                                    toggleDevice(device.udid)
+
+                        if store.devices.isEmpty {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.system(size: 11))
+                                Text("未检测到设备，请先在“设备”页刷新")
+                                    .font(.system(size: 11))
+                            }
+                            .foregroundStyle(.orange)
+                            .padding(.vertical, 4)
+                        } else {
+                            VStack(spacing: 6) {
+                                ForEach(store.devices) { device in
+                                    DeviceCheckRow(
+                                        device: device,
+                                        isSelected: project.deviceUDIDs.contains(device.udid)
+                                    ) {
+                                        toggleDevice(device.udid)
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                .padding(10)
-                .background {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.gray.opacity(0.05))
+                    .padding(10)
+                    .background {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.gray.opacity(0.05))
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: "desktopcomputer")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.blue)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("安装到本机")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("构建完成后自动替换 /Applications 中的同名应用；定时任务同样按此执行")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(10)
+                    .background {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.blue.opacity(0.05))
+                    }
                 }
                 HStack {
                     Text("启用")

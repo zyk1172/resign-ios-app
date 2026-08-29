@@ -8,11 +8,12 @@ struct BuildExecutor: Sendable {
     /// Common xcodebuild arguments for one project. Team is injected through
     /// DEVELOPMENT_TEAM so automatic signing uses the user-selected team.
     static func baseArguments(for project: iOSProject, derivedDataPath: String) -> [String] {
+        let destination = project.platform == .macos ? "platform=macOS" : "generic/platform=iOS"
         var arguments = [
             project.projectFlag, project.projectPath,
             "-scheme", project.scheme,
             "-configuration", project.configuration,
-            "-destination", "generic/platform=iOS",
+            "-destination", destination,
             "-derivedDataPath", derivedDataPath,
             "-allowProvisioningUpdates",
             "CODE_SIGN_STYLE=Automatic"

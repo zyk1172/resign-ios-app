@@ -7,6 +7,14 @@ enum ExecutionSource: String, Codable, Equatable, Sendable {
     case scheduled
 }
 
+// MARK: - Project Platform
+/// Build destination of a project: install to paired iOS devices, or install
+/// the built app into the local /Applications folder.
+enum ProjectPlatform: String, Codable, Equatable, Sendable, CaseIterable {
+    case ios
+    case macos
+}
+
 // MARK: - iOS Project Configuration
 struct iOSProject: Identifiable, Codable, Equatable, Hashable, Sendable {
     var id = UUID()
@@ -15,9 +23,11 @@ struct iOSProject: Identifiable, Codable, Equatable, Hashable, Sendable {
     var projectPath: String = ""
     var scheme: String = ""
     var configuration: String = "Debug"
+    /// Build destination: iOS devices (default) or the local Mac.
+    var platform: ProjectPlatform = .ios
     /// Apple Developer Team ID used for automatic signing; empty/nil = follow project defaults
     var teamID: String? = nil
-    /// Target device UDIDs; empty = first available device
+    /// Target device UDIDs; empty = first available device. Unused for macOS.
     var deviceUDIDs: [String] = []
     var isEnabled: Bool = true
     /// Last build time (UI cache; ExecutionState is authoritative for scheduling)
@@ -235,7 +245,7 @@ struct PersistedState: Codable, Sendable {
 
 extension iOSProject {
     private enum CodingKeys: String, CodingKey {
-        case id, name, projectPath, scheme, configuration, teamID
+        case id, name, projectPath, scheme, configuration, platform, teamID
         case deviceUDIDs, isEnabled, lastBuildDate, lastBuildStatus
     }
 
@@ -246,6 +256,7 @@ extension iOSProject {
         projectPath = try c.decodeIfPresent(String.self, forKey: .projectPath) ?? ""
         scheme = try c.decodeIfPresent(String.self, forKey: .scheme) ?? ""
         configuration = try c.decodeIfPresent(String.self, forKey: .configuration) ?? "Debug"
+        platform = try c.decodeIfPresent(ProjectPlatform.self, forKey: .platform) ?? .ios
         teamID = try c.decodeIfPresent(String.self, forKey: .teamID)
         deviceUDIDs = try c.decodeIfPresent([String].self, forKey: .deviceUDIDs) ?? []
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true

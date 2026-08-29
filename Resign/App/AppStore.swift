@@ -234,10 +234,10 @@ final class AppStore {
         }
     }
 
-    func startBuildSingle(_ project: iOSProject) {
+    func startBuildSingle(_ project: iOSProject, toDevice udid: String? = nil) {
         guard activeBuildTask == nil else { return }
         activeBuildTask = Task { [weak self] in
-            await self?.buildSingle(project)
+            await self?.buildSingle(project, deviceOverride: udid.map { [$0] })
             self?.activeBuildTask = nil
         }
     }
@@ -300,7 +300,7 @@ final class AppStore {
         }
     }
 
-    private func buildSingle(_ project: iOSProject) async {
+    private func buildSingle(_ project: iOSProject, deviceOverride: [String]? = nil) async {
         guard !isBuilding else { return }
         isBuilding = true
         let activity = beginPreventSleepActivityIfNeeded()
@@ -312,9 +312,12 @@ final class AppStore {
 
         statusMessage = "正在刷新设备…"
         await refreshDevices()
-        let result = await performBuild(of: project, source: .manual)
+        let result = await performBuild(of: project, source: .manual, deviceOverride: deviceOverride)
         if result.cancelled {
             statusMessage = "任务已取消"
+        } else if let udid = deviceOverride?.first,
+                  let deviceName = devices.first(where: { $0.udid == udid })?.name {
+            statusMessage = result.success ? "\(project.name) 已推送到 \(deviceName)" : "\(project.name) 推送到 \(deviceName) 失败"
         } else {
             statusMessage = result.success ? "\(project.name) 构建成功" : "\(project.name) 构建失败"
         }
@@ -329,17 +332,40 @@ final class AppStore {
     }
 
     /// Runs the shared BuildCoordinator and records the outcome into the
-    /// unified execution state + logs, then persists with merge.
-    private func performBuild(of project: iOSProject, source: ExecutionSource) async -> BuildResult {
+    /// unified execution state + logs, then persists with merge. When
+    /// `deviceOverride` names a device that is not currently connected, the
+    /// run fails fast without building.
+    private func performBuild(
+        of project: iOSProject,
+        source: ExecutionSource,
+        deviceOverride: [String]? = nil
+    ) async -> BuildResult {
         let startedAt = Date()
-        statusMessage = "正在构建：\(project.name)"
-        let request = BuildRequest(
-            project: project,
-            settings: settings,
-            availableDevices: devices,
-            source: source
-        )
-        let result = await buildCoordinator.execute(request)
+        if let udid = deviceOverride?.first,
+           let deviceName = devices.first(where: { $0.udid == udid })?.name {
+            statusMessage = "正在构建：\(project.name) → \(deviceName)"
+        } else {
+            statusMessage = "正在构建：\(project.name)"
+        }
+
+        let result: BuildResult
+        if let udid = deviceOverride?.first,
+           !devices.contains(where: { $0.udid == udid && $0.isAvailable }) {
+            let deviceName = devices.first(where: { $0.udid == udid })?.name ?? String(udid.prefix(8))
+            result = BuildResult(
+                success: false,
+                output: "错误：目标设备「\(deviceName)」当前未连接。请连接并信任此电脑后在设备页刷新，然后再试。"
+            )
+        } else {
+            let request = BuildRequest(
+                project: project,
+                settings: settings,
+                availableDevices: devices,
+                source: source,
+                deviceOverride: deviceOverride
+            )
+            result = await buildCoordinator.execute(request)
+        }
         let duration = Date().timeIntervalSince(startedAt)
 
         var state = currentState()
