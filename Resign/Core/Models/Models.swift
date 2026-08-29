@@ -1,0 +1,333 @@
+import Foundation
+
+// MARK: - Execution Source
+/// Where a build/install run originated: the GUI or the scheduled worker.
+enum ExecutionSource: String, Codable, Equatable, Sendable {
+    case manual
+    case scheduled
+}
+
+// MARK: - iOS Project Configuration
+struct iOSProject: Identifiable, Codable, Equatable, Hashable, Sendable {
+    var id = UUID()
+    var name: String = ""
+    /// Path to .xcodeproj or .xcworkspace
+    var projectPath: String = ""
+    var scheme: String = ""
+    var configuration: String = "Debug"
+    /// Apple Developer Team ID used for automatic signing; empty/nil = follow project defaults
+    var teamID: String? = nil
+    /// Target device UDIDs; empty = first available device
+    var deviceUDIDs: [String] = []
+    var isEnabled: Bool = true
+    /// Last build time (UI cache; ExecutionState is authoritative for scheduling)
+    var lastBuildDate: Date?
+    /// Last build status (drives card color)
+    var lastBuildStatus: BuildStatus?
+
+    var isWorkspace: Bool {
+        projectPath.hasSuffix(".xcworkspace")
+    }
+
+    var projectName: String {
+        URL(fileURLWithPath: projectPath)
+            .deletingPathExtension()
+            .lastPathComponent
+    }
+
+    var projectFlag: String {
+        isWorkspace ? "-workspace" : "-project"
+    }
+}
+
+// MARK: - Project Execution State
+/// The single source of truth for "when was this project last built/installed
+/// successfully". Both the GUI and the scheduled worker read and update this
+/// via ConfigStore; the scheduling due-date is derived from
+/// `lastSuccessfulInstallDate` (not from any sidecar epoch file).
+struct ProjectExecutionState: Codable, Equatable, Sendable {
+    var projectID: UUID
+    var lastAttemptDate: Date?
+    var lastSuccessfulInstallDate: Date?
+    var lastStatus: BuildStatus?
+    var lastSource: ExecutionSource?
+    /// Human-readable reason of the most recent failure (nil when last run succeeded)
+    var lastFailureSummary: String?
+
+    init(
+        projectID: UUID,
+        lastAttemptDate: Date? = nil,
+        lastSuccessfulInstallDate: Date? = nil,
+        lastStatus: BuildStatus? = nil,
+        lastSource: ExecutionSource? = nil,
+        lastFailureSummary: String? = nil
+    ) {
+        self.projectID = projectID
+        self.lastAttemptDate = lastAttemptDate
+        self.lastSuccessfulInstallDate = lastSuccessfulInstallDate
+        self.lastStatus = lastStatus
+        self.lastSource = lastSource
+        self.lastFailureSummary = lastFailureSummary
+    }
+
+    /// Merge key: never nil so comparisons are total.
+    var effectiveLastAttempt: Date { lastAttemptDate ?? .distantPast }
+}
+
+// MARK: - Connected iOS Device
+struct iOSDevice: Identifiable, Equatable, Sendable {
+    var id: String { udid }
+    let udid: String
+    let name: String
+    let osVersion: String
+    let connectionType: String   // "USB" / "WiFi"
+    let isAvailable: Bool
+}
+
+// MARK: - Development Team
+/// An Apple Developer Team that can be selected for automatic signing.
+struct DevelopmentTeam: Identifiable, Equatable, Hashable, Sendable {
+    var id: String { teamID }
+    let teamID: String
+    let displayName: String
+}
+
+// MARK: - App Settings
+struct AppSettings: Codable, Equatable, Sendable {
+    /// Days between auto-resign runs (default 6, safe margin before 7-day expiry)
+    var resignIntervalDays: Int = 6
+    /// Hour of day to run (0–23)
+    var scheduleHour: Int = 3
+    /// Minute of hour to run (0–59)
+    var scheduleMinute: Int = 0
+    /// Path to Xcode.app (supports Beta)
+    var xcodePath: String = "/Applications/Xcode-beta.app"
+    /// Keep macOS awake during build
+    var preventSleep: Bool = true
+    /// Send macOS notification on completion
+    var notifyOnComplete: Bool = true
+    /// Auto-install schedule on launch
+    var autoInstallSchedule: Bool = true
+    /// Cooldown seconds between consecutive project builds (avoid resource spikes)
+    var buildCooldownSeconds: Int = 5
+    /// Enable automatic retry on failure
+    var enableRetry: Bool = true
+    /// Max retry attempts (0 = no retry)
+    var maxRetries: Int = 2
+    /// Minutes between retry attempts
+    var retryIntervalMinutes: Int = 30
+
+    func normalized() -> AppSettings {
+        var s = self
+        s.resignIntervalDays = min(max(s.resignIntervalDays, 1), 7)
+        s.scheduleHour = min(max(s.scheduleHour, 0), 23)
+        s.scheduleMinute = min(max(s.scheduleMinute, 0), 59)
+        s.buildCooldownSeconds = min(max(s.buildCooldownSeconds, 0), 60)
+        s.maxRetries = min(max(s.maxRetries, 0), 3)
+        s.retryIntervalMinutes = min(max(s.retryIntervalMinutes, 1), 120)
+        return s
+    }
+}
+
+// MARK: - Build Log Entry
+struct BuildLogEntry: Identifiable, Codable, Equatable, Hashable, Sendable {
+    var id = UUID()
+    let date: Date
+    let projectName: String
+    var status: BuildStatus
+    var output: String
+    var durationSeconds: Double
+    /// Device names that failed to install (nil = not recorded / N/A)
+    var failedDevices: [String]? = nil
+    /// Stable identifier for imported background-run logs.
+    var sourceIdentifier: String? = nil
+    /// File name (under the logs directory) that holds the full raw log.
+    /// Empty means `output` already contains the full text. Keeps large
+    /// xcodebuild logs out of config.json.
+    var logFile: String? = nil
+    /// Manual (GUI) or scheduled (worker) execution. nil = legacy entry.
+    var source: ExecutionSource? = nil
+
+    var durationText: String {
+        let m = Int(durationSeconds) / 60
+        let s = Int(durationSeconds) % 60
+        return m > 0 ? "\(m)m \(s)s" : "\(s)s"
+    }
+
+    /// Concise "where + why" summary for failed builds
+    var errorSummary: BuildErrorSummary? {
+        guard status == .failed else { return nil }
+        let base = FailureClassifier.diagnose(output)
+        // If specific devices failed, include them in the location
+        if let names = failedDevices, !names.isEmpty {
+            let devicePart = names.joined(separator: "、")
+            let reason = base?.reason ?? "安装失败"
+            return BuildErrorSummary(location: "安装 → \(devicePart)", reason: reason)
+        }
+        return base
+    }
+}
+
+// MARK: - Build Error Summary
+struct BuildErrorSummary: Equatable, Sendable {
+    /// Where the problem is (e.g. "ContentView.swift:42", "签名", "安装")
+    let location: String
+    /// Why it failed (the actual error message)
+    let reason: String
+}
+
+enum BuildStatus: String, Codable, Sendable {
+    case success
+    case failed
+    case running
+    case cancelled
+
+    var label: String {
+        switch self {
+        case .success:   return "成功"
+        case .failed:    return "失败"
+        case .running:   return "运行中"
+        case .cancelled: return "已取消"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .success:   return "checkmark.circle.fill"
+        case .failed:    return "xmark.circle.fill"
+        case .running:   return "arrow.triangle.2.circlepath"
+        case .cancelled: return "minus.circle.fill"
+        }
+    }
+}
+
+// MARK: - Persisted App State
+/// Schema-v2 persistence. v1 (the pre-1.5 release format) had no schemaVersion
+/// key and no executionStates; ConfigStore migrates those transparently.
+struct PersistedState: Codable, Sendable {
+    static let currentSchemaVersion = 2
+
+    var schemaVersion: Int
+    var projects: [iOSProject]
+    var settings: AppSettings
+    var executionStates: [ProjectExecutionState]
+    var logs: [BuildLogEntry]
+
+    init(
+        projects: [iOSProject] = [],
+        settings: AppSettings = AppSettings(),
+        executionStates: [ProjectExecutionState] = [],
+        logs: [BuildLogEntry] = [],
+        schemaVersion: Int = PersistedState.currentSchemaVersion
+    ) {
+        self.schemaVersion = schemaVersion
+        self.projects = projects
+        self.settings = settings
+        self.executionStates = executionStates
+        self.logs = logs
+    }
+}
+
+// MARK: - Forward-compatible Codable
+// All persisted types decode with `decodeIfPresent` + defaults so adding a
+// field in a future version can never invalidate an existing config.json.
+// The custom implementations live in extensions to preserve memberwise inits.
+
+extension iOSProject {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, projectPath, scheme, configuration, teamID
+        case deviceUDIDs, isEnabled, lastBuildDate, lastBuildStatus
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        projectPath = try c.decodeIfPresent(String.self, forKey: .projectPath) ?? ""
+        scheme = try c.decodeIfPresent(String.self, forKey: .scheme) ?? ""
+        configuration = try c.decodeIfPresent(String.self, forKey: .configuration) ?? "Debug"
+        teamID = try c.decodeIfPresent(String.self, forKey: .teamID)
+        deviceUDIDs = try c.decodeIfPresent([String].self, forKey: .deviceUDIDs) ?? []
+        isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        lastBuildDate = try c.decodeIfPresent(Date.self, forKey: .lastBuildDate)
+        lastBuildStatus = try c.decodeIfPresent(BuildStatus.self, forKey: .lastBuildStatus)
+    }
+}
+
+extension AppSettings {
+    private enum CodingKeys: String, CodingKey {
+        case resignIntervalDays, scheduleHour, scheduleMinute, xcodePath
+        case preventSleep, notifyOnComplete, autoInstallSchedule
+        case buildCooldownSeconds, enableRetry, maxRetries, retryIntervalMinutes
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        resignIntervalDays = try c.decodeIfPresent(Int.self, forKey: .resignIntervalDays) ?? 6
+        scheduleHour = try c.decodeIfPresent(Int.self, forKey: .scheduleHour) ?? 3
+        scheduleMinute = try c.decodeIfPresent(Int.self, forKey: .scheduleMinute) ?? 0
+        xcodePath = try c.decodeIfPresent(String.self, forKey: .xcodePath) ?? "/Applications/Xcode-beta.app"
+        preventSleep = try c.decodeIfPresent(Bool.self, forKey: .preventSleep) ?? true
+        notifyOnComplete = try c.decodeIfPresent(Bool.self, forKey: .notifyOnComplete) ?? true
+        autoInstallSchedule = try c.decodeIfPresent(Bool.self, forKey: .autoInstallSchedule) ?? true
+        buildCooldownSeconds = try c.decodeIfPresent(Int.self, forKey: .buildCooldownSeconds) ?? 5
+        enableRetry = try c.decodeIfPresent(Bool.self, forKey: .enableRetry) ?? true
+        maxRetries = try c.decodeIfPresent(Int.self, forKey: .maxRetries) ?? 2
+        retryIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .retryIntervalMinutes) ?? 30
+    }
+}
+
+extension BuildLogEntry {
+    private enum CodingKeys: String, CodingKey {
+        case id, date, projectName, status, output, durationSeconds
+        case failedDevices, sourceIdentifier, logFile, source
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        date = try c.decode(Date.self, forKey: .date)
+        projectName = try c.decodeIfPresent(String.self, forKey: .projectName) ?? ""
+        status = try c.decodeIfPresent(BuildStatus.self, forKey: .status) ?? .failed
+        output = try c.decodeIfPresent(String.self, forKey: .output) ?? ""
+        durationSeconds = try c.decodeIfPresent(Double.self, forKey: .durationSeconds) ?? 0
+        failedDevices = try c.decodeIfPresent([String].self, forKey: .failedDevices)
+        sourceIdentifier = try c.decodeIfPresent(String.self, forKey: .sourceIdentifier)
+        logFile = try c.decodeIfPresent(String.self, forKey: .logFile)
+        source = try c.decodeIfPresent(ExecutionSource.self, forKey: .source)
+    }
+}
+
+extension ProjectExecutionState {
+    private enum CodingKeys: String, CodingKey {
+        case projectID, lastAttemptDate, lastSuccessfulInstallDate
+        case lastStatus, lastSource, lastFailureSummary
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        projectID = try c.decode(UUID.self, forKey: .projectID)
+        lastAttemptDate = try c.decodeIfPresent(Date.self, forKey: .lastAttemptDate)
+        lastSuccessfulInstallDate = try c.decodeIfPresent(Date.self, forKey: .lastSuccessfulInstallDate)
+        lastStatus = try c.decodeIfPresent(BuildStatus.self, forKey: .lastStatus)
+        lastSource = try c.decodeIfPresent(ExecutionSource.self, forKey: .lastSource)
+        lastFailureSummary = try c.decodeIfPresent(String.self, forKey: .lastFailureSummary)
+    }
+}
+
+extension PersistedState {
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, projects, settings, executionStates, logs
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // A config without schemaVersion is the released v1 format.
+        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        projects = try c.decodeIfPresent([iOSProject].self, forKey: .projects) ?? []
+        settings = try c.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings()
+        executionStates = try c.decodeIfPresent([ProjectExecutionState].self, forKey: .executionStates) ?? []
+        logs = try c.decodeIfPresent([BuildLogEntry].self, forKey: .logs) ?? []
+    }
+}

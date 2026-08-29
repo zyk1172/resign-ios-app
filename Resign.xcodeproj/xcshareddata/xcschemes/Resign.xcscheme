@@ -21,6 +21,20 @@
                ReferencedContainer = "container:Resign.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "8194F8F7B84EBFEC257BA1EB"
+               BuildableName = "ResignWorker"
+               BlueprintName = "ResignWorker"
+               ReferencedContainer = "container:Resign.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

@@ -4,16 +4,21 @@ import SwiftUI
 struct ResignApp: App {
     @State private var store = AppStore()
 
+    init() {
+        // The scheduled worker never shows UI; it is a separate executable
+        // (ResignWorker). Nothing to branch on here.
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(store)
                 .onAppear {
-                    if store.settings.autoInstallSchedule && !store.projects.isEmpty
-                        && (!store.isScheduleInstalled
-                            || ScheduleService.needsUpdate(settings: store.settings, projects: store.projects)) {
-                        store.installSchedule()
-                    }
+                    // 进入 App 后自动刷新一次设备名单；后台执行，不阻塞窗口出现。
+                    Task { await store.refreshDevices() }
+                    // Refresh launchd status and auto-migrate/install the
+                    // schedule (replaces the legacy bash engine if present).
+                    Task { await store.refreshScheduleAndAutoInstall() }
                 }
         }
         .windowStyle(.titleBar)

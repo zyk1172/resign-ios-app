@@ -12,6 +12,24 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
 targets:
+  # Shared core + scheduled worker entry. Compiled into its own executable so
+  # the LaunchAgent can run build/install logic in Swift instead of a
+  # duplicated bash engine. Embeds into Resign.app/Contents/MacOS/.
+  ResignWorker:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Resign/Core
+      - path: Resign/Worker
+    settings:
+      base:
+        PRODUCT_NAME: ResignWorker
+        SWIFT_VERSION: "5.9"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: YES
+
   Resign:
     type: application
     platform: macOS
@@ -19,12 +37,19 @@ targets:
       - path: Resign
         excludes:
           - "**/.DS_Store"
+          - "Worker/**"
+    dependencies:
+      - target: ResignWorker
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.resign.app
         PRODUCT_NAME: Resign
-        MARKETING_VERSION: "1.4.1"
-        CURRENT_PROJECT_VERSION: "7"
+        MARKETING_VERSION: "1.5.0"
+        CURRENT_PROJECT_VERSION: "8"
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
         INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Resign contributors"
         GENERATE_INFOPLIST_FILE: YES
@@ -52,6 +77,7 @@ schemes:
     build:
       targets:
         Resign: all
+        ResignWorker: all
     run:
       config: Debug
     test:

@@ -156,16 +156,21 @@ struct ScheduleView: View {
                         .buttonStyle(.bordered)
                     }
 
-                    Text(AppStore.scriptURL.path)
+                    Text(AppPaths.schedulePlistURL.path)
                         .font(.system(size: AppStyle.microSize, design: .monospaced))
                         .foregroundStyle(.tertiary)
                         .textSelection(.enabled)
+                    Text("后台任务由 Resign.app 内置的 ResignWorker 执行，与手动执行共用同一构建引擎和配置")
+                        .font(.system(size: AppStyle.microSize))
+                        .foregroundStyle(.tertiary)
                 }
                 .card()
             }
             .padding(16)
         }
         .onChange(of: store.settings) { _, _ in store.save() }
+        .onChange(of: store.settings.scheduleHour) { _, _ in store.refreshScheduleIfInstalled() }
+        .onChange(of: store.settings.scheduleMinute) { _, _ in store.refreshScheduleIfInstalled() }
     }
 
     private func chooseXcode() {

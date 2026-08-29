@@ -18,8 +18,14 @@
 - 修改 `project.yml` 后必须运行: `xcodegen generate`
 - 主 Scheme: `Resign`（已共享到 `xcshareddata/xcschemes/`）
 - App Target: `Resign`（macOS app，Deployment Target macOS 14.0，Swift 5.9）
+- Worker Target: `ResignWorker`（CLI tool，嵌入 `Resign.app/Contents/MacOS/`；后台定时任务入口 `--scheduled-run`，与 App 共用 `Resign/Core/` 下的同一构建引擎）
 - Test Target: `ResignTests`（XCTest，位于 `Tests/ResignTests`）
 - SPM: 本项目不使用 Swift Package / CocoaPods，无 `Package.resolved`。
+
+### 架构约束（重要）
+- 构建/签名/安装/产物解析/设备选择/错误分类/重试策略**只有一份实现**：`Resign/Core/Coordination/BuildCoordinator.swift`。GUI（`App/AppStore`）与后台（`Worker/ScheduledRunCoordinator`）都必须经过它，禁止再造第二套执行逻辑。
+- `config.json`（经 `Core/Persistence/ConfigStore`）是项目/设置/执行状态/日志的唯一事实源；GUI 保存走合并写，Worker 走原子读改写，均持有 `config.lock`。
+- 共享 Core 同时编入 App 与 Worker 两个 target：Core 内禁止 import SwiftUI，不要依赖仅 App 可用的服务。
 
 ### 常用命令
 ```bash

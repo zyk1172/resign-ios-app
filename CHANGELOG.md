@@ -1,5 +1,39 @@
 # 更新记录
 
+## 1.5.0（2026-08-30）
+
+架构级重构：**消除双执行引擎**，统一为一份 Swift 构建核心。
+
+### 双执行引擎移除（P0）
+- 新增 `ResignWorker` 可执行 target（嵌入 `Resign.app/Contents/MacOS/`），后台定时任务改为 `launchd` 直接运行 `ResignWorker --scheduled-run`；
+- 删除动态生成的 `resign_all.sh` Bash 引擎（约 250 行重复的设备检测/到期判断/构建/产物解析/安装/重试逻辑），`LaunchAgent` 只负责"何时触发"；
+- GUI 与后台任务现在调用**同一个** `BuildCoordinator`：设备选择、`-showBuildSettings` 产物定位、xcodebuild 参数、错误分类、重试策略完全一致；同一错误在前后台得到相同判断，同一项目在前后台得到相同 App 产物。
+
+### 跨进程锁闭环（P0）
+- 旧版只有 GUI 获取 `resign.lock`，后台 Bash 直接 `rm -rf` DerivedData，仍可能踩踏；现在后台 Worker 与 GUI 都经过 `BuildCoordinator` 内的同一把 flock，被占用时返回明确可记录的失败结果。
+
+### 统一行为
+- 设备发现统一为 `devicectl --json-output` 结构化解析，移除后台对人类可读表格的 grep 解析；
+- 多设备安装按设备独立追踪：已成功设备不再重装，每轮只重试失败设备；fatal 设备立即停止；
+- 重试策略统一：retryable 才重试；fatal / unknown 一律不重试（构建与安装同一 `RetryPolicy`）。
+
+### 单一事实源
+- 新增 `ProjectExecutionState`（上次尝试/上次成功安装时间/状态/来源/失败摘要），`config.json` 成为唯一事实源；后台成功会即时更新状态，手动成功同样推进后台到期时间；
+- 到期判断统一走 `ScheduleDuePolicy`（本地日历天 + `lastSuccessfulInstallDate`），旧 `logs/state/<uuid>.epoch` 文件迁移一次后废弃；
+- `config.json` 增加 `schemaVersion`（v1 自动迁移：超长内联日志落盘、epoch 折叠进执行状态），所有持久化类型使用 `decodeIfPresent`，未来新增字段不会导致旧配置整体解码失败；
+- GUI 保存与 Worker 写入通过 `config.lock` flock 做原子读改写合并，互相不覆盖（修复旧版 5 秒 throttle 静默丢弃调度同步的问题——LaunchAgent 不再内嵌项目快照，该同步需求本身消失）。
+
+### 日志系统
+- 定时任务日志导入同样走 64KB 落盘阈值（修复后台运行日志把 config.json 撑到几十 MB 的问题）；存量超限日志在迁移时一次性外置；
+- `trim` 同时删除被裁剪条目的磁盘文件；"清空日志"同时清理 `logs/` 下全部受管产物（不触碰 config 与调度状态）；启动时清理孤儿日志文件；
+- 日志条目区分"手动/定时"来源，日志详情统一经 LogRepository 读取。
+
+### 其他
+- AppStore 瘦身：持久化交给 `ConfigStore`、日志交给 `LogRepository`、调度交给 `ScheduleManager`、构建交给 `BuildCoordinator`；View 不再直接访问大型基础设施服务；
+- 文件夹扫描改为一次性批量插入 + 单次保存 + 有界并发的 Scheme 发现（最多 3 个 xcodebuild 并行），不再逐项目保存/同步；
+- 配置编解码与 launchctl 调用移出主线程；
+- 测试从"断言 Bash 脚本文本"迁移为针对 Swift 逻辑的单元测试（70 个）：ProductResolver / FailureClassifier / RetryPolicy / 设备选择与解析 / 到期策略 / 配置迁移与合并 / 执行状态 / BuildCoordinator（注入 MockProcessRunner）/ 调度 plist / 文件锁。
+
 ## 1.4.1（2026-08-15）
 
 - 日志落盘：超过 64KB 的构建日志写入 `logs/build_*.log` 独立文件，`config.json` 只保留头部+尾部摘要（保留尾部是为了错误诊断），避免配置被日志撑到几十 MB；日志详情页会自动读取完整文件。

@@ -1,131 +1,64 @@
 import Foundation
 
-// MARK: - iOS Project Configuration
-struct iOSProject: Identifiable, Codable, Equatable, Hashable {
-    var id = UUID()
-    var name: String = ""
-    /// Path to .xcodeproj or .xcworkspace
-    var projectPath: String = ""
-    var scheme: String = ""
-    var configuration: String = "Debug"
-    /// Apple Developer Team ID used for automatic signing; empty/nil = follow project defaults
-    var teamID: String? = nil
-    /// Target device UDIDs; empty = first available device
-    var deviceUDIDs: [String] = []
-    var isEnabled: Bool = true
-    /// Last build time
-    var lastBuildDate: Date?
-    /// Last build status (drives card color)
-    var lastBuildStatus: BuildStatus?
-
-    var isWorkspace: Bool {
-        projectPath.hasSuffix(".xcworkspace")
-    }
-
-    var projectName: String {
-        URL(fileURLWithPath: projectPath)
-            .deletingPathExtension()
-            .lastPathComponent
-    }
-
-    var projectFlag: String {
-        isWorkspace ? "-workspace" : "-project"
-    }
+/// Classification of a build/install failure for retry decisions.
+/// Both the GUI and the scheduled worker route every failure through here,
+/// so the same error always produces the same retry behaviour and diagnosis.
+enum FailureClass: Equatable, Sendable {
+    /// Temporary (device offline, network hiccup) - retrying may help.
+    case retryable
+    /// Deterministic (profile missing device, quota full, bundle id taken) - retrying is pointless.
+    case fatal
+    /// Not recognized - conservative default that does NOT retry.
+    case unknown
 }
 
-// MARK: - Connected iOS Device
-struct iOSDevice: Identifiable, Equatable {
-    var id: String { udid }
-    let udid: String
-    let name: String
-    let osVersion: String
-    let connectionType: String   // "USB" / "WiFi"
-    let isAvailable: Bool
-}
+enum FailureClassifier {
+    static let transientMarkers = [
+        "timed out", "timeout", "temporarily unavailable", "device is locked",
+        "device unavailable", "lost connection", "connection interrupted",
+        "could not connect", "developer disk image", "network connection was lost",
+        "is not paired", "device not paired", "pairing"
+    ]
 
-// MARK: - Development Team
-/// An Apple Developer Team that can be selected for automatic signing.
-struct DevelopmentTeam: Identifiable, Equatable, Hashable {
-    var id: String { teamID }
-    let teamID: String
-    let displayName: String
-}
+    static let fatalMarkers = [
+        "0xe8008012",
+        "provisioning profile cannot be installed on this device",
+        "doesn't include the currently connected device",
+        "is not included in the provisioning profile",
+        "mifreeprofilevalidatedapptracker",
+        "maximum number of apps for free development profiles",
+        "failed registering bundle identifier",
+        "cannot be registered to your development team",
+        "no account for team",
+        "no profiles for",
+        "developer mode is disabled",
+        "developer mode has not been enabled",
+        "certificate has expired",
+        "certificate expired",
+        "xcode license",
+        "not enough space",
+        "disk full"
+    ]
 
-// MARK: - App Settings
-struct AppSettings: Codable, Equatable {
-    /// Days between auto-resign runs (default 6, safe margin before 7-day expiry)
-    var resignIntervalDays: Int = 6
-    /// Hour of day to run (0–23)
-    var scheduleHour: Int = 3
-    /// Minute of hour to run (0–59)
-    var scheduleMinute: Int = 0
-    /// Path to Xcode.app (supports Beta)
-    var xcodePath: String = "/Applications/Xcode-beta.app"
-    /// Keep macOS awake during build
-    var preventSleep: Bool = true
-    /// Send macOS notification on completion
-    var notifyOnComplete: Bool = true
-    /// Auto-install schedule on launch
-    var autoInstallSchedule: Bool = true
-    /// Cooldown seconds between consecutive project builds (avoid resource spikes)
-    var buildCooldownSeconds: Int = 5
-    /// Enable automatic retry on failure
-    var enableRetry: Bool = true
-    /// Max retry attempts (0 = no retry)
-    var maxRetries: Int = 2
-    /// Minutes between retry attempts
-    var retryIntervalMinutes: Int = 30
-}
-
-// MARK: - Build Log Entry
-struct BuildLogEntry: Identifiable, Codable, Hashable {
-    var id = UUID()
-    let date: Date
-    let projectName: String
-    var status: BuildStatus
-    var output: String
-    var durationSeconds: Double
-    /// Device names that failed to install (nil = not recorded / N/A)
-    var failedDevices: [String]? = nil
-    /// Stable identifier for imported background-run logs.
-    var sourceIdentifier: String? = nil
-    /// File name (under AppPaths.logDirectory) that holds the full raw log.
-    /// Empty means `output` already contains the full text. Keeps large
-    /// xcodebuild logs out of config.json.
-    var logFile: String? = nil
-
-    var durationText: String {
-        let m = Int(durationSeconds) / 60
-        let s = Int(durationSeconds) % 60
-        return m > 0 ? "\(m)m \(s)s" : "\(s)s"
+    static func isTransientFailure(_ output: String) -> Bool {
+        let text = output.lowercased()
+        return transientMarkers.contains { text.contains($0) }
     }
 
-    /// Concise "where + why" summary for failed builds
-    var errorSummary: BuildErrorSummary? {
-        guard status == .failed else { return nil }
-        let base = BuildErrorParser.summarize(output)
-        // If specific devices failed, include them in the location
-        if let names = failedDevices, !names.isEmpty {
-            let devicePart = names.joined(separator: "、")
-            let reason = base?.reason ?? "安装失败"
-            return BuildErrorSummary(location: "安装 → \(devicePart)", reason: reason)
+    static func classify(_ output: String) -> FailureClass {
+        let text = output.lowercased()
+        if fatalMarkers.contains(where: { text.contains($0) }) {
+            return .fatal
         }
-        return base
+        if isTransientFailure(output) {
+            return .retryable
+        }
+        return .unknown
     }
-}
 
-// MARK: - Build Error Summary
-struct BuildErrorSummary: Equatable {
-    /// Where the problem is (e.g. "ContentView.swift:42", "签名", "安装")
-    let location: String
-    /// Why it failed (the actual error message)
-    let reason: String
-}
-
-/// Extracts a concise "where + why" summary from raw build output
-enum BuildErrorParser {
-
-    static func summarize(_ output: String) -> BuildErrorSummary? {
+    /// Maps a raw build/install output to a concise, actionable "where + why"
+    /// diagnosis (in Chinese, actionable steps included where known).
+    static func diagnose(_ output: String) -> BuildErrorSummary? {
         let text = output.lowercased()
         let lines = output.components(separatedBy: .newlines)
 
@@ -289,36 +222,4 @@ enum BuildErrorParser {
 
         return nil
     }
-}
-
-enum BuildStatus: String, Codable {
-    case success
-    case failed
-    case running
-    case cancelled
-
-    var label: String {
-        switch self {
-        case .success:   return "成功"
-        case .failed:    return "失败"
-        case .running:   return "运行中"
-        case .cancelled: return "已取消"
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .success:   return "checkmark.circle.fill"
-        case .failed:    return "xmark.circle.fill"
-        case .running:   return "arrow.triangle.2.circlepath"
-        case .cancelled: return "minus.circle.fill"
-        }
-    }
-}
-
-// MARK: - Persisted App State
-struct PersistedState: Codable {
-    var projects: [iOSProject] = []
-    var settings: AppSettings = AppSettings()
-    var logs: [BuildLogEntry] = []
 }

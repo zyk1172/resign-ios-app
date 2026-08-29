@@ -15,8 +15,7 @@ struct LogsView: View {
                 if !store.logs.isEmpty {
                     Button(role: .destructive) {
                         withAnimation(.snappy(duration: 0.25)) {
-                            store.logs.removeAll()
-                            store.save()
+                            store.clearLogs()
                         }
                     } label: {
                         Label("清空", systemImage: "trash")
@@ -96,6 +95,16 @@ struct LogCard: View {
 
                     Spacer()
 
+                    if entry.source == .scheduled {
+                        Text("定时")
+                            .font(.system(size: AppStyle.captionSize, weight: .medium))
+                            .padding(.horizontal, AppStyle.badgeHPadding)
+                            .padding(.vertical, AppStyle.badgeVPadding)
+                            .background(.blue.opacity(0.1))
+                            .foregroundStyle(.blue)
+                            .clipShape(RoundedRectangle(cornerRadius: AppStyle.badgeCornerRadius))
+                    }
+
                     Text(entry.durationText)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -161,6 +170,7 @@ struct LogCard: View {
 // MARK: - Log Detail Sheet
 struct LogDetailSheet: View {
     let entry: BuildLogEntry
+    @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -233,10 +243,9 @@ struct LogDetailSheet: View {
     }
 
     /// Full log text: if the entry was externalized to a file under logs/,
-    /// load it from disk; otherwise the summary in `output` is the full text.
+    /// load it from disk (via LogRepository); otherwise the summary in
+    /// `output` is the full text.
     private var displayOutput: String {
-        guard let logFile = entry.logFile, !logFile.isEmpty else { return entry.output }
-        let url = AppPaths.logDirectory.appendingPathComponent(logFile)
-        return (try? String(contentsOf: url, encoding: .utf8)) ?? "日志文件不可读：\(logFile)"
+        store.fullLogText(for: entry)
     }
 }

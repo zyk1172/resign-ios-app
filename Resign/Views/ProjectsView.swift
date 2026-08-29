@@ -171,6 +171,7 @@ struct ProjectCard: View {
     let onEdit: () -> Void
     let onBuild: () -> Void
     let onDelete: () -> Void
+    @Environment(AppStore.self) private var store
     @State private var isHovered = false
     @State private var appIcon: NSImage?
 
@@ -362,7 +363,7 @@ struct ProjectCard: View {
             }
         }
         .task(id: project.projectPath) {
-            appIcon = await BuildService.loadAppIcon(projectPath: project.projectPath)
+            appIcon = await store.appIcon(for: project.projectPath)
         }
     }
 }
@@ -537,18 +538,13 @@ struct ProjectEditSheet: View {
     private func loadSchemes() {
         guard !project.projectPath.isEmpty else { return }
         Task {
-            let result = await BuildService.listSchemes(
-                projectPath: project.projectPath,
-                xcodePath: store.settings.xcodePath
-            )
-            await MainActor.run { schemes = result }
+            schemes = await store.schemes(for: project.projectPath)
         }
     }
 
     private func loadTeams() {
         Task {
-            let result = await BuildService.listDevelopmentTeams()
-            await MainActor.run { teams = result }
+            teams = await store.developmentTeams()
         }
     }
 
