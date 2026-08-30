@@ -441,6 +441,57 @@ final class BuildCoordinatorTests: XCTestCase {
         XCTAssertTrue(runner.recordedCalls.isEmpty, "被锁挡下时不得执行任何外部命令")
     }
 
+    // MARK: - Provisioning profile refresh
+
+    func testStaleStoredProfilesDeletedBeforeSigningWhenBundleIDKnown() async throws {
+        let runner = MockProcessRunner()
+        createApp("Demo.app")
+        let project = makeProject(deviceUDIDs: ["D1"])
+
+        // 预置缓存元数据（含 bundleID）+ 一份同 Bundle ID 的旧 profile
+        try BuildCacheManager.saveMetadata(
+            BuildArtifactMetadata(
+                projectID: project.id,
+                fingerprint: "whatever",
+                xcodeVersion: "Xcode 27.0\nBuild version 27A5209h",
+                builtAt: Date(),
+                scheme: "Demo",
+                configuration: "Debug",
+                platform: .ios,
+                teamID: nil,
+                projectPath: projectPath,
+                productName: "Demo.app",
+                bundleIdentifier: "com.resign.test.demo",
+                buildSucceeded: true
+            ),
+            directory: cacheDirectory
+        )
+        let profileStore = stateRoot.appendingPathComponent("profiles", isDirectory: true)
+        try FileManager.default.createDirectory(at: profileStore, withIntermediateDirectories: true)
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <plist version="1.0"><dict>
+        <key>Name</key><string>old</string>
+        <key>TeamIdentifier</key><array><string>OLDTEAM123</string></array>
+        <key>Entitlements</key><dict><key>application-identifier</key><string>OLDTEAM123.com.resign.test.demo</string></dict>
+        </dict></plist>
+        """
+        try (Data("cms".utf8) + Data(xml.utf8)).write(to: profileStore.appendingPathComponent("old.mobileprovision"))
+
+        runner.enqueueVersion()
+        runner.enqueue(buildSettingsJSON(targets: [("Demo", "Demo.app")]))
+        runner.enqueue(makeProcessResult(exitCode: 0, stdout: "BUILD SUCCEEDED"))
+        runner.enqueue(makeProcessResult(exitCode: 0)) // D1
+
+        var coordinator = makeCoordinator(runner: runner)
+        coordinator.provisioningProfilesDirectories = [profileStore]
+        let result = await coordinator.execute(makeRequest(project: project))
+
+        XCTAssertTrue(result.success, result.output)
+        XCTAssertTrue(result.output.contains("已清除 1 个旧 provisioning profile"), "旧 profile 必须在签名前清除，强制重新生成")
+        XCTAssertTrue(ProvisioningProfileService.storedProfiles(directory: profileStore).isEmpty)
+    }
+
     // MARK: - Signature audit
 
     func testEmbeddedProfileExpirationParsedFromMobileProvision() throws {
@@ -453,7 +504,7 @@ final class BuildCoordinatorTests: XCTestCase {
         let xml = """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0"><dict><key>ExpirationDate</key><date>\(formatter.string(from: expiration))</date><key>Name</key><string>iOS Team Provisioning Profile</string></dict></plist>
+        <plist version="1.0"><dict><key>ExpirationDate</key><date>\(formatter.string(from: expiration))</date><key>TeamIdentifier</key><array><string>JUQXD87P93</string></array><key>Name</key><string>iOS Team Provisioning Profile</string></dict></plist>
         """
         let payload = Data("binary-cms-noise-prefix".utf8) + Data(xml.utf8) + Data("trailing-signature-bytes".utf8)
         let appDir = stateRoot.appendingPathComponent("audit-app/Demo.app", isDirectory: true)
@@ -461,14 +512,15 @@ final class BuildCoordinatorTests: XCTestCase {
         try payload.write(to: appDir.appendingPathComponent("embedded.mobileprovision"))
 
         let parsed = try XCTUnwrap(
-            BuildCoordinator.embeddedProfileExpiration(appPath: appDir.path)
+            BuildCoordinator.embeddedProfileInfo(appPath: appDir.path)
         )
-        XCTAssertEqual(parsed.timeIntervalSince1970, expiration.timeIntervalSince1970, accuracy: 1)
+        XCTAssertEqual(parsed.expiration.timeIntervalSince1970, expiration.timeIntervalSince1970, accuracy: 1)
+        XCTAssertEqual(parsed.teamID, "JUQXD87P93")
 
         // 无 profile 的 App 返回 nil，不影响执行。
         let bareDir = stateRoot.appendingPathComponent("audit-bare/Bar.app", isDirectory: true)
         try FileManager.default.createDirectory(at: bareDir, withIntermediateDirectories: true)
-        XCTAssertNil(BuildCoordinator.embeddedProfileExpiration(appPath: bareDir.path))
+        XCTAssertNil(BuildCoordinator.embeddedProfileInfo(appPath: bareDir.path))
     }
 
     // MARK: - Build cache

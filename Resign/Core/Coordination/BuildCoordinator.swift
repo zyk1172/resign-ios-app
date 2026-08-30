@@ -70,6 +70,8 @@ struct BuildCoordinator: Sendable {
     var macInstallDirectory: URL = URL(fileURLWithPath: "/Applications", isDirectory: true)
     /// 构建缓存元数据目录（injectable for tests）。
     var buildCacheDirectory: URL = AppPaths.buildCacheDirectory
+    /// 本机 provisioning profile 存储目录（injectable for tests；nil = 系统默认）。
+    var provisioningProfilesDirectories: [URL]? = nil
 
     /// Where a finished run installs: paired devices (iOS) or this Mac (macOS).
     private enum InstallPlan: Sendable {
@@ -138,6 +140,7 @@ struct BuildCoordinator: Sendable {
 
         let workspace = derivedDataRoot.appendingPathComponent(project.id.uuidString, isDirectory: true)
         let reusedExistingWorkspace = FileManager.default.fileExists(atPath: workspace.path)
+        let cachedMetadata = BuildCacheManager.loadMetadata(for: project.id, directory: buildCacheDirectory)
         let decision: BuildCacheDecision
         if let fingerprint {
             decision = BuildCacheManager.decide(
@@ -161,6 +164,25 @@ struct BuildCoordinator: Sendable {
         // 强制签名刷新：清空产物目录后，xcodebuild 必须重建 .app 并重跑
         // 签名阶段（与全量构建的签名行为一致），编译产物仍然复用。
         Self.clearProductsDirectory(workspace: workspace, configuration: project.configuration, platform: project.platform)
+
+        // 强制 profile 重新生成：xcodebuild 会复用存储里"仍然有效"的旧 profile，
+        // 即使项目已切换 Team 或设备注册已变化——那正是"装上不能用"的来源。
+        // 删除该 Bundle ID（含扩展）的旧 profile 后，-allowProvisioningUpdates
+        // 才会为当前团队 + 当前已注册设备生成新 profile（免费 = 创建 + 7 天）。
+        if project.platform == .ios {
+            let bundleID = cachedMetadata?.bundleIdentifier ?? Self.probableBundleIdentifier(project: project)
+            if let bundleID = bundleID, !bundleID.isEmpty {
+                let profileDirectories = provisioningProfilesDirectories
+                    ?? ProvisioningProfileService.defaultDirectories
+                let removed = (try? ProvisioningProfileService.deleteStoredProfiles(
+                    bundleID: bundleID,
+                    directories: profileDirectories
+                )) ?? 0
+                if removed > 0 {
+                    fullOutput += "已清除 \(removed) 个旧 provisioning profile（强制为当前团队与设备重新生成）\n"
+                }
+            }
+        }
 
         let executor = BuildExecutor(runner: runner)
         let baseArguments = BuildExecutor.baseArguments(for: project, derivedDataPath: workspace.path)
@@ -254,12 +276,13 @@ struct BuildCoordinator: Sendable {
         }
         fullOutput += "\n本次产物: \(appPath)\n"
 
-        // 签名审计：把嵌入 profile 的有效期写进日志，续签是否真的刷新一目了然。
-        if let expiration = Self.embeddedProfileExpiration(appPath: appPath) {
+        // 签名审计：嵌入 profile 的团队与有效期写进日志，续签是否真的刷新一目了然。
+        if let info = Self.embeddedProfileInfo(appPath: appPath) {
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyy-MM-dd HH:mm"
             formatter.timeZone = TimeZone.current
-            fullOutput += "签名有效期至: \(formatter.string(from: expiration))\n"
+            let team = info.teamID ?? "未知团队"
+            fullOutput += "签名有效期至: \(formatter.string(from: info.expiration))（Team \(team)）\n"
         }
 
         // 构建成功：写入缓存元数据（best effort，失败只记日志不判失败）。
@@ -404,7 +427,12 @@ struct BuildCoordinator: Sendable {
     /// 读取 iOS App 内嵌 provisioning profile 的过期时间。
     /// mobileprovision = CMS 包裹的明文 plist，直接按 XML 边界提取解析；
     /// 解析失败只返回 nil，不影响执行。
-    static func embeddedProfileExpiration(appPath: String) -> Date? {
+    struct EmbeddedProfileInfo: Sendable {
+        let expiration: Date
+        let teamID: String?
+    }
+
+    static func embeddedProfileInfo(appPath: String) -> EmbeddedProfileInfo? {
         let profileURL = URL(fileURLWithPath: appPath).appendingPathComponent("embedded.mobileprovision")
         guard let data = try? Data(contentsOf: profileURL) else { return nil }
         let text = String(decoding: data, as: UTF8.self)
@@ -416,6 +444,32 @@ struct BuildCoordinator: Sendable {
         guard let plist = try? PropertyListSerialization.propertyList(
             from: Data(xml.utf8), options: [], format: nil
         ) as? [String: Any] else { return nil }
-        return plist["ExpirationDate"] as? Date
+        guard let expiration = plist["ExpirationDate"] as? Date else { return nil }
+        return EmbeddedProfileInfo(
+            expiration: expiration,
+            teamID: (plist["TeamIdentifier"] as? [String])?.first
+        )
+    }
+
+    /// 从 pbxproj 猜测 bundle identifier（仅当全工程只有一个取值时可信）。
+    static func probableBundleIdentifier(project: iOSProject) -> String? {
+        let pbxprojURL = URL(fileURLWithPath: project.projectPath)
+            .appendingPathComponent("project.pbxproj")
+        guard let text = try? String(contentsOf: pbxprojURL, encoding: .utf8) else { return nil }
+
+        var values: Set<String> = []
+        let marker = "PRODUCT_BUNDLE_IDENTIFIER"
+        let chunks = text.components(separatedBy: marker).dropFirst()
+        for chunk in chunks {
+            let trimmed = chunk.drop(while: { $0 == " " || $0 == "\t" })
+            guard trimmed.hasPrefix("=") else { continue }
+            let rest = trimmed.dropFirst().drop(while: { $0 == " " || $0 == "\t" })
+            guard rest.hasPrefix("\""), rest.count > 1 else { continue }
+            let inner = rest.dropFirst()
+            guard let quote = inner.firstIndex(of: "\"") else { continue }
+            let value = String(inner[inner.startIndex..<quote])
+            if !value.isEmpty { values.insert(value) }
+        }
+        return values.count == 1 ? values.first : nil
     }
 }
