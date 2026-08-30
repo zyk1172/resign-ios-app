@@ -41,6 +41,8 @@ struct BuildResult: Sendable {
     /// True when the run never started because the cross-process lock was held.
     var lockBlocked: Bool = false
     var deviceOutcomes: [DeviceInstallOutcome] = []
+    /// Main .app this run built and installed (nil = run did not reach install).
+    var installedAppPath: String? = nil
 
     static func cancelledResult(output: String = "任务已取消") -> BuildResult {
         BuildResult(success: false, output: output, cancelled: true)
@@ -192,7 +194,7 @@ struct BuildCoordinator: Sendable {
             let outcome = await installer.install(appPath: appPath)
             fullOutput += "\n=== INSTALL (macOS) ===\n\(outcome.output)\n"
             if Task.isCancelled { return .cancelledResult(output: fullOutput + "\n任务已取消") }
-            return BuildResult(success: outcome.success, output: fullOutput)
+            return BuildResult(success: outcome.success, output: fullOutput, installedAppPath: appPath)
 
         case .devices(let deviceUDIDs):
             let installer = AppInstaller(runner: runner)
@@ -212,7 +214,8 @@ struct BuildCoordinator: Sendable {
                 success: failedUDIDs.isEmpty,
                 output: fullOutput,
                 failedDeviceUDIDs: failedUDIDs,
-                deviceOutcomes: outcomes
+                deviceOutcomes: outcomes,
+                installedAppPath: appPath
             )
         }
     }

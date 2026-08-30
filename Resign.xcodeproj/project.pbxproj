@@ -13,6 +13,8 @@
 		19AB2ADFA2B4C43FA3D42D4F /* FileLockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE09A18EDB023768A1780E44 /* FileLockTests.swift */; };
 		1B475AA96CCB88B98BD7D993 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E92137CBD252EF4A4757982F /* Assets.xcassets */; };
 		1E54E67F117222F51B1422DA /* ScheduleDuePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9608A51C54141D478215D854 /* ScheduleDuePolicy.swift */; };
+		208A1FB2ECA2867E558CD314 /* ScheduleExecutionReportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F687B6076514F190A8F26EF /* ScheduleExecutionReportTests.swift */; };
+		2224F43E72D2FC8781A2D711 /* ScheduleExecutionReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F60D2D4134D9283B78B4C92D /* ScheduleExecutionReport.swift */; };
 		234277E0382FA75368459BC5 /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F59B9766ADC8EDE06C5E1F7B /* AppStore.swift */; };
 		2E5D9426F8A167702D0BAA65 /* ResignWorker in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 2F616C9996044BCE2517001A /* ResignWorker */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		304CB9B5CF9B32C3C9C2E0A5 /* ScheduleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2B991984A277DAE70E7C209 /* ScheduleTests.swift */; };
@@ -48,6 +50,7 @@
 		847411DCFD088EDE3835704C /* FailureClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A52753EB19A5993578BCCD3 /* FailureClassifier.swift */; };
 		857BBDDF164C1EE03D45B3EE /* AppIconService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFC292CC81AD264926D90747 /* AppIconService.swift */; };
 		8EB484F8D4B67DBCD97548A0 /* ProcessRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFAC60EA979AD2BBA91DAA20 /* ProcessRunner.swift */; };
+		8F37AFAE5DDB31241D93EEEC /* ScheduleExecutionReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F60D2D4134D9283B78B4C92D /* ScheduleExecutionReport.swift */; };
 		906CFF3CB80FBDDD32103780 /* XcodeToolchain.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9CD916C19331C63C5F1CBFD /* XcodeToolchain.swift */; };
 		9C0A5909B939708A3412C489 /* MacAppInstallerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 054D2DF571A2B84B4E858465 /* MacAppInstallerTests.swift */; };
 		9FFFF1E7DF96B4C7732F4BD2 /* LogRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22A7F3D2DEE4023CB13C444 /* LogRepository.swift */; };
@@ -123,6 +126,7 @@
 		21D42C1CFD42E3921F9E615B /* ScheduledRunCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledRunCoordinatorTests.swift; sourceTree = "<group>"; };
 		25D87A6FC29E49D8897BDEB5 /* DeviceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceService.swift; sourceTree = "<group>"; };
 		2F616C9996044BCE2517001A /* ResignWorker */ = {isa = PBXFileReference; includeInIndex = 0; path = ResignWorker; sourceTree = BUILT_PRODUCTS_DIR; };
+		2F687B6076514F190A8F26EF /* ScheduleExecutionReportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleExecutionReportTests.swift; sourceTree = "<group>"; };
 		3A52753EB19A5993578BCCD3 /* FailureClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FailureClassifier.swift; sourceTree = "<group>"; };
 		3F6B6F780F9E7DE3211D24F2 /* ResignTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ResignTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		59837BD1E6E1411F0F124A67 /* RetryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetryPolicy.swift; sourceTree = "<group>"; };
@@ -162,6 +166,7 @@
 		E92137CBD252EF4A4757982F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F3656130F1D2973BD668740C /* DevelopmentTeamService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevelopmentTeamService.swift; sourceTree = "<group>"; };
 		F59B9766ADC8EDE06C5E1F7B /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
+		F60D2D4134D9283B78B4C92D /* ScheduleExecutionReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleExecutionReport.swift; sourceTree = "<group>"; };
 		FA3BE015F1992CAFFF383481 /* BuildCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildCoordinator.swift; sourceTree = "<group>"; };
 		FE09A18EDB023768A1780E44 /* FileLockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileLockTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -196,6 +201,7 @@
 			isa = PBXGroup;
 			children = (
 				9608A51C54141D478215D854 /* ScheduleDuePolicy.swift */,
+				F60D2D4134D9283B78B4C92D /* ScheduleExecutionReport.swift */,
 				843629A00F9F2CF4DE3A6784 /* ScheduleManager.swift */,
 			);
 			path = Schedule;
@@ -236,6 +242,7 @@
 				009997F57129A77A926039C6 /* ResignTests.swift */,
 				628F2AE5860496E755544334 /* RetryPolicyTests.swift */,
 				21D42C1CFD42E3921F9E615B /* ScheduledRunCoordinatorTests.swift */,
+				2F687B6076514F190A8F26EF /* ScheduleExecutionReportTests.swift */,
 				D2B991984A277DAE70E7C209 /* ScheduleTests.swift */,
 				68F84661E6E3543D989AEBDD /* TestSupport */,
 			);
@@ -491,6 +498,7 @@
 				F4495C2E82DAF97F544238E3 /* ResignApp.swift in Sources */,
 				3629779578C993ECB3884007 /* RetryPolicy.swift in Sources */,
 				4C39349B37A9A5D931732222 /* ScheduleDuePolicy.swift in Sources */,
+				8F37AFAE5DDB31241D93EEEC /* ScheduleExecutionReport.swift in Sources */,
 				546EF0AB3BDC3DB6ACE7EFB0 /* ScheduleManager.swift in Sources */,
 				48A11C070A4491CD1ED25258 /* ScheduleView.swift in Sources */,
 				13A23193BE5009CDA00C613A /* ScheduledRunCoordinator.swift in Sources */,
@@ -515,6 +523,7 @@
 				60690F4AB6EB9AE5678C4A94 /* ProductResolverTests.swift in Sources */,
 				D40AD62A21BDBE69312E1BCB /* ResignTests.swift in Sources */,
 				C916FE392B8B96B39FA07049 /* RetryPolicyTests.swift in Sources */,
+				208A1FB2ECA2867E558CD314 /* ScheduleExecutionReportTests.swift in Sources */,
 				304CB9B5CF9B32C3C9C2E0A5 /* ScheduleTests.swift in Sources */,
 				82459022D54E18E818D04D99 /* ScheduledRunCoordinatorTests.swift in Sources */,
 			);
@@ -543,6 +552,7 @@
 				FDCEF9F4F739E829AA4B1ADD /* ProjectScanner.swift in Sources */,
 				7CCA5E814DC5F66BD2A4DAB3 /* RetryPolicy.swift in Sources */,
 				1E54E67F117222F51B1422DA /* ScheduleDuePolicy.swift in Sources */,
+				2224F43E72D2FC8781A2D711 /* ScheduleExecutionReport.swift in Sources */,
 				7D9814B46CCCAC7E36D35287 /* ScheduleManager.swift in Sources */,
 				5B52E5287C161DED0872FA18 /* ScheduledRunCoordinator.swift in Sources */,
 				64829A9B3CF25B267C7D0BDA /* SchemeService.swift in Sources */,
@@ -574,7 +584,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
@@ -583,7 +593,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.5.1;
+				MARKETING_VERSION = 1.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.resign.app;
 				PRODUCT_NAME = Resign;
 				SDKROOT = macosx;
@@ -735,7 +745,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
@@ -744,7 +754,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.5.1;
+				MARKETING_VERSION = 1.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.resign.app;
 				PRODUCT_NAME = Resign;
 				SDKROOT = macosx;
