@@ -6,7 +6,9 @@
   - 构建工作区（DerivedData）从 /tmp 迁移到 `Application Support/Resign/DerivedData/<项目UUID>` 并**默认保留**，重启不再丢失，Xcode 增量编译生效——源码未变化时编译阶段被完全跳过（实测 21 文件工程：冷构建 12.7s → 未变化 3.1s，约 **75%** 节省；越大越明显）；
   - 每次构建前仅清空本配置的**产物目录（.app）**，强制 xcodebuild 重跑签名阶段——免费签名 7 天有效期照常刷新（直接重装旧签名 .app 不会刷新 profile，因此不做产物级复用）；
   - `ProjectFingerprintService` 计算项目指纹（工程配置 + 源码/资源/依赖清单内容哈希；排除 .git/build/DerivedData/xcuserdata 等），`BuildCacheManager` 保存每项目元数据并给出带原因的缓存决策，日志输出 `=== CACHE ===` 段；
-  - 失效条件：源码/资源/工程文件变化、依赖清单（Package.resolved 等）变化、Scheme/Configuration/平台/Team 变化、项目路径变化、Xcode 版本变化、工作区缺失；工作区损坏（特征错误如 no such module）自动**回退 clean build** 一次；
+  - 失效条件：源码/资源/工程文件变化、依赖清单（Package.resolved 等）变化、Scheme/Configuration/平台/Team 变化、项目路径变化、Xcode 版本变化、工作区缺失；工作区损坏（特征错误如 no such module）自动转入**独立的回退阶段**——清除工作区完整重建一次，不占用普通重试次数；
+  - 构建方式语义与实际执行严格对应：`首次构建`（冷启动）/`增量构建 · 项目有更新`/`增量构建 · 项目未变化`/`缓存失效 · 完整重建`，日志与 UI 徽章一致；
+  - 指纹扫描排除同级**独立工程**目录（有自己的 .xcodeproj），避免兄弟工程变化导致假 cache miss；普通 Bundle 资源（png/jpg/pdf/音视频/字体等）纳入指纹。
   - 每次安装日志输出嵌入 profile 的**签名有效期**（"签名有效期至: …"），续签是否刷新直接可查；
   - 项目设置新增「清除构建缓存」按钮（构建进行中拒绝执行；只删除 Resign 管理路径）；
   - 日志/明细显示构建方式徽章：完整构建 / 增量构建。

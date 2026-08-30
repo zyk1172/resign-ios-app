@@ -140,7 +140,7 @@ final class BuildCoordinatorTests: XCTestCase {
         XCTAssertTrue(result.output.contains(appURL.path))
         XCTAssertEqual(result.failedDeviceUDIDs, [])
         XCTAssertEqual(result.builtAppPath, appURL.path, "产物路径必须结构化记录，供执行明细面板使用")
-        XCTAssertEqual(result.buildMode, .full, "首次执行应为完整构建")
+        XCTAssertEqual(result.buildMode, .cold, "首次执行应为冷启动构建")
         XCTAssertTrue(result.output.contains("=== CACHE ==="), "缓存决策必须写入日志")
 
         let deviceOutcomes = result.deviceOutcomes
@@ -490,7 +490,7 @@ final class BuildCoordinatorTests: XCTestCase {
         runner.enqueue(makeProcessResult(exitCode: 0)) // D2
         let first = await coordinator.execute(request)
         XCTAssertTrue(first.success, first.output)
-        XCTAssertEqual(first.buildMode, .full)
+        XCTAssertEqual(first.buildMode, .cold)
 
         // 工作区标记文件：如果第二次执行错误地清空工作区，标记会消失。
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
@@ -505,8 +505,8 @@ final class BuildCoordinatorTests: XCTestCase {
         let second = await coordinator.execute(request)
 
         XCTAssertTrue(second.success, second.output)
-        XCTAssertEqual(second.buildMode, .incremental, "指纹未变化时必须复用增量工作区")
-        XCTAssertTrue(second.output.contains("项目指纹未变化"))
+        XCTAssertEqual(second.buildMode, .incrementalUnchanged, "指纹未变化时必须复用增量工作区")
+        XCTAssertTrue(second.output.contains("项目未变化"))
         XCTAssertTrue(second.output.contains("=== CACHE ==="))
         XCTAssertTrue(
             FileManager.default.fileExists(atPath: workspace.appendingPathComponent("cache.marker").path),
@@ -586,7 +586,8 @@ final class BuildCoordinatorTests: XCTestCase {
         let second = await coordinator.execute(request)
 
         XCTAssertTrue(second.success, second.output)
-        XCTAssertTrue(second.output.contains("回退完整构建"))
+        XCTAssertEqual(second.buildMode, .cleanFallback, "回退阶段必须有独立语义")
+        XCTAssertTrue(second.output.contains("回退完整重建"))
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: workspace.appendingPathComponent("cache.marker").path),
             "回退 clean build 必须清除工作区"
@@ -619,7 +620,7 @@ final class BuildCoordinatorTests: XCTestCase {
         runner.enqueue(makeProcessResult(exitCode: 1, stderr: "0xe8008012 provisioning profile cannot be installed"))
         let second = await coordinator.execute(request)
 
-        XCTAssertEqual(second.buildMode, .incremental)
+        XCTAssertEqual(second.buildMode, .incrementalUnchanged)
         XCTAssertFalse(second.success)
         XCTAssertEqual(second.failedDeviceUDIDs, ["D2"])
         // 缓存元数据不受安装失败影响（构建本身成功）。

@@ -95,12 +95,12 @@ final class ExecutionRecorderTests: XCTestCase {
             DeviceInstallOutcome(udid: "D1", success: true, attempts: 1, output: ""),
             DeviceInstallOutcome(udid: "D2", success: false, attempts: 3, output: "")
         ]
-        result.buildMode = .incremental
+        result.buildMode = .incrementalUnchanged
         apply(result, source: .scheduled)
 
         let entry = state.logs.first
         XCTAssertEqual(entry?.builtAppPath, "/tmp/Demo.app")
-        XCTAssertEqual(entry?.buildMode, .incremental)
+        XCTAssertEqual(entry?.buildMode, .incrementalUnchanged)
         XCTAssertEqual(entry?.deviceInstallSummaries, [
             DeviceInstallSummary(udid: "D1", deviceName: "iPhone 15", success: true, attempts: 1),
             DeviceInstallSummary(udid: "D2", deviceName: "D2", success: false, attempts: 3)

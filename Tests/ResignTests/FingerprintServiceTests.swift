@@ -84,6 +84,27 @@ final class FingerprintServiceTests: XCTestCase {
         XCTAssertEqual(before, try fingerprint(), "临时文件/未纳入构建的文件不应使缓存失效")
     }
 
+    func testPlainBundleResourceChangeChangesFingerprint() throws {
+        // 非 .xcassets 的普通资源文件（Copy Bundle Resources）必须参与指纹。
+        let before = try fingerprint()
+        try Data([0x89, 0x50]).write(to: root.appendingPathComponent("Demo/background.png"))
+        XCTAssertNotEqual(before, try fingerprint())
+    }
+
+    func testForeignSiblingProjectDoesNotChangeFingerprint() throws {
+        // 兄弟目录是另一个独立 Xcode 工程：其源码变化不应使本项目指纹失效
+        // （旧版扫描父目录导致的假 cache miss）。
+        let anotherDir = root.appendingPathComponent("AnotherApp", isDirectory: true)
+        try FileManager.default.createDirectory(at: anotherDir.appendingPathComponent("AnotherApp.xcodeproj"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: anotherDir.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+        try Data("import Foundation".utf8).write(to: anotherDir.appendingPathComponent("Sources/Other.swift"))
+        try Data("pbx".utf8).write(to: anotherDir.appendingPathComponent("AnotherApp.xcodeproj/project.pbxproj"))
+
+        let before = try fingerprint()
+        try Data("changed!".utf8).write(to: anotherDir.appendingPathComponent("Sources/Other.swift"))
+        XCTAssertEqual(before, try fingerprint(), "独立兄弟工程的变化不应影响本项目指纹")
+    }
+
     func testConfigurationChangeChangesFingerprint() throws {
         let before = try fingerprint()
         project.configuration = "Release"

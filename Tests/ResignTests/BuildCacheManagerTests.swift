@@ -64,96 +64,99 @@ final class BuildCacheManagerTests: XCTestCase {
 
     // MARK: - Decision
 
-    func testFirstRunIsFullBuild() {
-        // 全新安装：无元数据、无工作区 → 首次构建。
-        if case .fullBuild(let reason) = decide(workspaceExists: false) {
+    func testFirstRunIsColdBuild() {
+        // 全新安装：无元数据、无工作区 → 冷启动构建。
+        if case .coldBuild(let reason) = decide(workspaceExists: false) {
             XCTAssertTrue(reason.contains("首次构建"))
         } else {
-            XCTFail("无元数据必须完整构建")
+            XCTFail("无元数据且无工作区必须冷启动构建")
         }
-        // 有工作区但无元数据（例如元数据文件被手动删除）→ 同样完整构建。
-        if case .fullBuild = decide(workspaceExists: true) {
-            // 期望完整构建
+        // 有工作区但无元数据（例如元数据文件被手动删除）→ 信任 Xcode 增量状态。
+        if case .incrementalChangedBuild(let reason) = decide(workspaceExists: true) {
+            XCTAssertTrue(reason.contains("无缓存元数据"))
         } else {
-            XCTFail("无元数据必须完整构建")
+            XCTFail("有工作区无元数据必须按增量处理")
         }
     }
 
-    func testUnchangedProjectIsIncrementalBuild() throws {
+    func testUnchangedProjectIsIncrementalUnchangedBuild() throws {
         try BuildCacheManager.saveMetadata(metadata(), directory: cacheDirectory)
-        if case .incrementalBuild(let reason) = decide() {
-            XCTAssertTrue(reason.contains("指纹未变化"))
+        if case .incrementalUnchangedBuild(let reason) = decide() {
+            XCTAssertTrue(reason.contains("项目未变化"))
         } else {
             XCTFail("指纹一致必须增量复用")
         }
     }
 
-    func testChangedFingerprintIsFullBuild() throws {
+    func testChangedFingerprintIsIncrementalChangedBuild() throws {
         try BuildCacheManager.saveMetadata(metadata(), directory: cacheDirectory)
-        if case .fullBuild(let reason) = decide(fingerprint: "fingerprint-v2") {
-            XCTAssertTrue(reason.contains("指纹变化"))
+        if case .incrementalChangedBuild(let reason) = decide(fingerprint: "fingerprint-v2") {
+            XCTAssertTrue(reason.contains("项目有更新"))
         } else {
-            XCTFail("源码变化必须完整构建")
+            XCTFail("源码变化必须走增量变更构建（保留工作区）")
         }
     }
 
-    func testMissingWorkspaceIsFullBuildEvenWhenFingerprintMatches() throws {
+    func testMissingWorkspaceIsColdBuildEvenWhenFingerprintMatches() throws {
         try BuildCacheManager.saveMetadata(metadata(), directory: cacheDirectory)
-        if case .fullBuild(let reason) = decide(workspaceExists: false) {
+        if case .coldBuild(let reason) = decide(workspaceExists: false) {
             XCTAssertTrue(reason.contains("工作区缺失"), "元数据在但工作区不存在必须重建（对应评审 §19.12）")
         } else {
-            XCTFail("工作区缺失必须完整构建")
+            XCTFail("工作区缺失必须冷启动重建")
         }
     }
 
-    func testXcodeVersionChangeInvalidatesCache() throws {
+    func testXcodeVersionChangeTriggersCleanBuild() throws {
         try BuildCacheManager.saveMetadata(
             metadata(xcodeVersion: "Xcode 16.4\nBuild version 16F6"),
             directory: cacheDirectory
         )
-        if case .fullBuild(let reason) = decide() {
+        if case .cleanBuild(let reason) = decide() {
             XCTAssertTrue(reason.contains("Xcode 版本变化"))
         } else {
-            XCTFail("Xcode 版本变化必须失效缓存")
+            XCTFail("Xcode 版本变化必须清除工作区重建")
         }
+        XCTAssertTrue(decide().clearsWorkspace, "cleanBuild 决策必须清除工作区")
     }
 
-    func testConfigurationChangeInvalidatesCache() throws {
+    func testConfigurationChangeIsIncrementalChangedBuild() throws {
         try BuildCacheManager.saveMetadata(metadata(configuration: "Release"), directory: cacheDirectory)
-        if case .fullBuild(let reason) = decide() {
+        if case .incrementalChangedBuild(let reason) = decide() {
             XCTAssertTrue(reason.contains("配置变化"))
         } else {
-            XCTFail("Configuration 变化必须失效缓存")
+            XCTFail("Configuration 变化必须走增量变更构建")
         }
+        XCTAssertFalse(decide().clearsWorkspace)
     }
 
-    func testProjectPathChangeInvalidatesCache() throws {
+    func testProjectPathChangeTriggersCleanBuild() throws {
         try BuildCacheManager.saveMetadata(
             metadata(projectPath: "/tmp/other/Demo.xcodeproj"),
             directory: cacheDirectory
         )
-        if case .fullBuild(let reason) = decide() {
+        if case .cleanBuild(let reason) = decide() {
             XCTAssertTrue(reason.contains("项目路径变化"))
         } else {
-            XCTFail("项目路径变化必须失效缓存")
+            XCTFail("项目路径变化必须清除工作区重建")
         }
     }
 
-    func testCorruptedMetadataFallsBackToFullBuild() throws {
+    func testCorruptedMetadataTreatedAsNoMetadata() throws {
         try Data("not json {".utf8).write(to: BuildCacheManager.metadataURL(for: project.id, directory: cacheDirectory))
-        if case .fullBuild = decide() {
-            // 期望：元数据损坏 → 无缓存 → 回退完整构建，不失败
+        // 元数据损坏 → 视为无元数据；工作区仍在则按增量处理，不失败
+        if case .incrementalChangedBuild = decide(workspaceExists: true) {
+            // 期望
         } else {
-            XCTFail("元数据损坏必须回退完整构建")
+            XCTFail("元数据损坏且有工作区时必须按增量处理")
         }
     }
 
-    func testUnsuccessfulPreviousBuildIsFullBuild() throws {
+    func testUnsuccessfulPreviousBuildIsIncrementalChangedBuild() throws {
         try BuildCacheManager.saveMetadata(metadata(buildSucceeded: false), directory: cacheDirectory)
-        if case .fullBuild(let reason) = decide() {
+        if case .incrementalChangedBuild(let reason) = decide() {
             XCTAssertTrue(reason.contains("未成功"))
         } else {
-            XCTFail("上次构建未成功时不能复用")
+            XCTFail("上次构建未成功时按增量变更处理")
         }
     }
 

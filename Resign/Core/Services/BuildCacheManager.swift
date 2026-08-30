@@ -21,34 +21,53 @@ enum BuildCacheError: LocalizedError {
     }
 }
 
+/// 缓存决策。语义与实际执行严格对应：
+/// - coldBuild：无工作区（首次或工作区缺失），从零构建；
+/// - incrementalChangedBuild：保留工作区，项目有更新，Xcode 只编译变化部分；
+/// - incrementalUnchangedBuild：保留工作区，项目未变化，仅重组产物并重新签名；
+/// - cleanBuild：工作区必须清除后重建（Xcode 版本/项目路径变化等）。
+///
+/// 没有"直接复用旧产物"的分支：免费签名 profile 有效期 = 创建 + 7 天，
+/// 重装旧签名 .app 不会刷新有效期，签名阶段必须每次重跑。
 enum BuildCacheDecision: Equatable, Sendable {
-    case fullBuild(reason: String)
-    case incrementalBuild(reason: String)
-    case reuseArtifact(reason: String)
+    case coldBuild(reason: String)
+    case incrementalChangedBuild(reason: String)
+    case incrementalUnchangedBuild(reason: String)
+    case cleanBuild(reason: String)
 
     var reason: String {
         switch self {
-        case .fullBuild(let reason), .incrementalBuild(let reason), .reuseArtifact(let reason):
+        case .coldBuild(let reason), .incrementalChangedBuild(let reason),
+             .incrementalUnchangedBuild(let reason), .cleanBuild(let reason):
             return reason
         }
     }
 
     var mode: BuildMode {
         switch self {
-        case .fullBuild: return .full
-        case .incrementalBuild: return .incremental
-        case .reuseArtifact: return .cached
+        case .coldBuild: return .cold
+        case .incrementalChangedBuild: return .incrementalChanged
+        case .incrementalUnchangedBuild: return .incrementalUnchanged
+        case .cleanBuild: return .cold
         }
+    }
+
+    /// 该决策是否要求先清除工作区。
+    var clearsWorkspace: Bool {
+        if case .cleanBuild = self { return true }
+        return false
     }
 
     var logDescription: String {
         switch self {
-        case .fullBuild(let reason):
-            return "模式：完整构建（原因：\(reason)）"
-        case .incrementalBuild(let reason):
-            return "模式：增量构建（原因：\(reason)）——已跳过无变化编译，签名阶段将重新执行以刷新有效期"
-        case .reuseArtifact(let reason):
-            return "模式：缓存复用（原因：\(reason)）"
+        case .coldBuild(let reason):
+            return "模式：冷启动构建（原因：\(reason)）"
+        case .incrementalChangedBuild(let reason):
+            return "模式：增量构建（原因：\(reason)）——Xcode 将只编译变化部分"
+        case .incrementalUnchangedBuild(let reason):
+            return "模式：增量复用（原因：\(reason)）——跳过无变化编译，签名阶段重新执行以刷新有效期"
+        case .cleanBuild(let reason):
+            return "模式：清除工作区重建（原因：\(reason)）"
         }
     }
 }
@@ -161,30 +180,34 @@ enum BuildCacheManager {
         directory: URL = AppPaths.buildCacheDirectory
     ) -> BuildCacheDecision {
         guard let metadata = loadMetadata(for: project.id, directory: directory) else {
-            return .fullBuild(reason: workspaceExists ? "无缓存元数据，按完整构建处理" : "首次构建（无缓存元数据与构建工作区）")
+            // 无元数据：工作区仍在就信任 Xcode 的增量状态，否则冷启动。
+            if workspaceExists {
+                return .incrementalChangedBuild(reason: "无缓存元数据，按增量处理")
+            }
+            return .coldBuild(reason: "首次构建（无缓存元数据与构建工作区）")
         }
         guard metadata.buildSucceeded else {
-            return .fullBuild(reason: "上一次构建未成功，无法复用缓存状态")
+            return .incrementalChangedBuild(reason: "上一次构建未成功，重新执行")
         }
         guard metadata.xcodeVersion == xcodeVersion else {
-            return .fullBuild(reason: "Xcode 版本变化（\(metadata.xcodeVersion) → \(xcodeVersion)）")
+            return .cleanBuild(reason: "Xcode 版本变化（\(metadata.xcodeVersion) → \(xcodeVersion)），清除旧工具链产物")
         }
         guard metadata.projectPath == project.projectPath else {
-            return .fullBuild(reason: "项目路径变化（\(metadata.projectPath) → \(project.projectPath)）")
+            return .cleanBuild(reason: "项目路径变化（\(metadata.projectPath) → \(project.projectPath)），DerivedData 内含旧路径引用")
         }
         guard metadata.scheme == project.scheme,
               metadata.configuration == project.configuration,
               metadata.platform == project.platform,
               metadata.teamID == project.teamID else {
-            return .fullBuild(reason: "Scheme/Configuration/平台/Team 配置变化")
+            return .incrementalChangedBuild(reason: "Scheme/Configuration/平台/Team 配置变化")
         }
         guard metadata.fingerprint == currentFingerprint else {
-            return .fullBuild(reason: "项目指纹变化（源码/工程/依赖自上次成功构建后有更新）")
+            return .incrementalChangedBuild(reason: "项目有更新（源码/工程/依赖自上次成功构建后有变化）")
         }
         guard workspaceExists else {
-            return .fullBuild(reason: "项目指纹未变化，但构建工作区缺失，需重建工作区")
+            return .coldBuild(reason: "项目未变化但工作区缺失，重建工作区")
         }
-        return .incrementalBuild(reason: "项目指纹未变化，复用增量构建工作区（编译阶段将被 Xcode 跳过）")
+        return .incrementalUnchangedBuild(reason: "项目未变化，复用增量构建工作区（编译阶段将被 Xcode 跳过）")
     }
 
     /// 手动/自动清理某项目的构建工作区与元数据。
