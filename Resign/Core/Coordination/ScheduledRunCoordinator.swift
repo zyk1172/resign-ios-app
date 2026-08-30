@@ -1,9 +1,20 @@
 import Foundation
 
+/// Worker 退出码。launchd 会把 exit 0 记为"成功"，
+/// 因此配置损坏（3）与落盘失败（4）绝不能归并进 0。
+enum WorkerExitCode: Int32 {
+    case ok = 0
+    case executionFailed = 1
+    case invalidInvocation = 2
+    case configInvalid = 3
+    case persistenceFailed = 4
+}
+
 /// Scheduled execution mode. Runs the due projects through the shared
 /// BuildCoordinator and records every result into the single config.json
-/// (execution state + unified log entries). Exits 0 when all due projects
-/// succeeded, 1 otherwise, 2 on invalid invocation.
+/// (execution state + unified log entries).
+///
+/// Exit codes: see `WorkerExitCode`.
 struct ScheduledRunCoordinator: Sendable {
     let configDirectory: URL
     let runner: ProcessRunning
@@ -16,7 +27,11 @@ struct ScheduledRunCoordinator: Sendable {
 
         let loaded = configStore.load()
         if let error = loaded.error {
+            // 配置损坏时绝不能"成功地什么都不做"：launchd 会把 exit 0 记为
+            // 成功，用户会以为后台续签正常执行了。
             print("[ResignWorker] \(error)")
+            print("[ResignWorker] 已中止：配置读取失败（exit \(WorkerExitCode.configInvalid.rawValue)）")
+            return WorkerExitCode.configInvalid.rawValue
         }
         let state = loaded.state
         let settings = state.settings.normalized()
@@ -26,7 +41,7 @@ struct ScheduledRunCoordinator: Sendable {
         let enabled = state.projects.filter { $0.isEnabled && !$0.projectPath.isEmpty }
         guard !enabled.isEmpty else {
             print("[ResignWorker] 没有已启用的项目，结束")
-            return 0
+            return WorkerExitCode.ok.rawValue
         }
 
         // Due check against the unified execution states (last successful
@@ -43,7 +58,7 @@ struct ScheduledRunCoordinator: Sendable {
         }
         guard !due.isEmpty else {
             print("[ResignWorker] 所有项目均未到期，结束")
-            return 0
+            return WorkerExitCode.ok.rawValue
         }
         print("[ResignWorker] 到期项目：\(due.map(\.name).joined(separator: "、"))")
 
@@ -66,6 +81,7 @@ struct ScheduledRunCoordinator: Sendable {
         }
 
         var anyFailure = false
+        var persistenceFailed = false
         for (index, project) in due.enumerated() {
             let startedAt = Date()
             print("[ResignWorker] 开始构建：\(project.name)")
@@ -80,25 +96,27 @@ struct ScheduledRunCoordinator: Sendable {
             let duration = Date().timeIntervalSince(startedAt)
 
             // Record into the single source of truth (atomic read-modify-write).
-            let recorded = configStore.updateSynchronously { currentState in
-                ExecutionRecorder.apply(
-                    .init(
-                        projectID: project.id,
-                        projectName: project.name,
-                        result: result,
-                        source: .scheduled,
-                        startedAt: startedAt,
-                        durationSeconds: duration,
-                        deviceNames: deviceNames
-                    ),
-                    to: &currentState
-                ) { raw, date in
-                    logRepository.externalize(raw, date: date)
+            do {
+                try configStore.updateSynchronously { currentState in
+                    ExecutionRecorder.apply(
+                        .init(
+                            projectID: project.id,
+                            projectName: project.name,
+                            result: result,
+                            source: .scheduled,
+                            startedAt: startedAt,
+                            durationSeconds: duration,
+                            deviceNames: deviceNames
+                        ),
+                        to: &currentState
+                    ) { raw, date in
+                        logRepository.externalize(raw, date: date)
+                    }
+                    logRepository.trim(&currentState.logs)
                 }
-                logRepository.trim(&currentState.logs)
-            }
-            if !recorded {
-                print("[ResignWorker] ⚠️ 结果写入被跳过（config 被长期占用）")
+            } catch {
+                persistenceFailed = true
+                print("[ResignWorker] ⚠️ 结果写入失败：\(error.localizedDescription)")
             }
 
             print("[ResignWorker] \(result.success ? "✓" : "✗") \(project.name)（耗时 \(Int(duration))s）")
@@ -120,6 +138,7 @@ struct ScheduledRunCoordinator: Sendable {
             )
         }
 
-        return anyFailure ? 1 : 0
+        if persistenceFailed { return WorkerExitCode.persistenceFailed.rawValue }
+        return anyFailure ? WorkerExitCode.executionFailed.rawValue : WorkerExitCode.ok.rawValue
     }
 }

@@ -63,7 +63,18 @@ enum ExecutionRecorder {
         )
         state.logs.insert(entry, at: 0)
 
-        upsertExecutionState(projectID: input.projectID, status: status, source: input.source, entry: entry, at: input.startedAt, into: &state)
+        // 统一计算失败摘要：新建与更新执行状态都必须带上，
+        // 否则项目第一次失败时 lastFailureSummary 会是 nil。
+        let failureSummary: String? = status == .failed ? entry.errorSummary?.reason : nil
+
+        upsertExecutionState(
+            projectID: input.projectID,
+            status: status,
+            source: input.source,
+            failureSummary: failureSummary,
+            at: input.startedAt,
+            into: &state
+        )
 
         if let index = state.projects.firstIndex(where: { $0.id == input.projectID }) {
             state.projects[index].lastBuildDate = input.startedAt
@@ -75,7 +86,7 @@ enum ExecutionRecorder {
         projectID: UUID,
         status: BuildStatus,
         source: ExecutionSource,
-        entry: BuildLogEntry,
+        failureSummary: String?,
         at date: Date,
         into state: inout PersistedState
     ) {
@@ -88,8 +99,8 @@ enum ExecutionRecorder {
             }
             updated.lastStatus = status
             updated.lastSource = source
-            if status == .failed, let summary = entry.errorSummary {
-                updated.lastFailureSummary = summary.reason
+            if status == .failed {
+                updated.lastFailureSummary = failureSummary
             }
             state.executionStates[index] = updated
         } else {
@@ -99,7 +110,7 @@ enum ExecutionRecorder {
                 lastSuccessfulInstallDate: status == .success ? date : nil,
                 lastStatus: status,
                 lastSource: source,
-                lastFailureSummary: nil
+                lastFailureSummary: failureSummary
             ))
         }
     }
