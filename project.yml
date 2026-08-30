@@ -49,7 +49,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.resign.app
         PRODUCT_NAME: Resign
         MARKETING_VERSION: "1.6.0"
-        CURRENT_PROJECT_VERSION: "10"
+        CURRENT_PROJECT_VERSION: "11"
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
         INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Resign contributors"
         GENERATE_INFOPLIST_FILE: YES

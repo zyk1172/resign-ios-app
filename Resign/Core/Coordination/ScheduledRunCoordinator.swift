@@ -20,6 +20,8 @@ struct ScheduledRunCoordinator: Sendable {
     let runner: ProcessRunning
 
     func run(now: Date = Date()) async -> Int32 {
+        AppPaths.cleanupLegacyTemporaryWorkspaces()
+
         let logRepository = LogRepository(
             directory: configDirectory.appendingPathComponent("logs", isDirectory: true)
         )
@@ -129,9 +131,10 @@ struct ScheduledRunCoordinator: Sendable {
         }
 
         if settings.notifyOnComplete {
-            let body = anyFailure
-                ? "到期项目存在失败，请打开 Resign 查看日志"
-                : "到期项目已全部构建并安装成功"
+            let body = Self.notificationBody(
+                persistenceFailed: persistenceFailed,
+                executionFailed: anyFailure
+            )
             _ = await runner.run(
                 "/usr/bin/osascript",
                 arguments: ["-e", "display notification \"\(body)\" with title \"Resign\""]
@@ -140,5 +143,17 @@ struct ScheduledRunCoordinator: Sendable {
 
         if persistenceFailed { return WorkerExitCode.persistenceFailed.rawValue }
         return anyFailure ? WorkerExitCode.executionFailed.rawValue : WorkerExitCode.ok.rawValue
+    }
+
+    /// 通知内容按严重度排序：落盘失败 > 执行失败 > 成功。
+    /// 落盘失败时绝不能显示"全部成功"——用户会误以为续签完成。
+    static func notificationBody(persistenceFailed: Bool, executionFailed: Bool) -> String {
+        if persistenceFailed {
+            return "项目已执行，但结果保存失败；下次可能重复执行，请打开 Resign 检查"
+        }
+        if executionFailed {
+            return "到期项目存在失败，请打开 Resign 查看日志"
+        }
+        return "到期项目已全部构建并安装成功"
     }
 }

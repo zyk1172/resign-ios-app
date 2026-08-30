@@ -105,6 +105,16 @@ struct LogCard: View {
                             .clipShape(RoundedRectangle(cornerRadius: AppStyle.badgeCornerRadius))
                     }
 
+                    if let mode = entry.buildMode {
+                        Text(mode.label)
+                            .font(.system(size: AppStyle.captionSize, weight: .medium))
+                            .padding(.horizontal, AppStyle.badgeHPadding)
+                            .padding(.vertical, AppStyle.badgeVPadding)
+                            .background(Color(mode.color).opacity(0.1))
+                            .foregroundStyle(Color(mode.color))
+                            .clipShape(RoundedRectangle(cornerRadius: AppStyle.badgeCornerRadius))
+                    }
+
                     Text(entry.durationText)
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)

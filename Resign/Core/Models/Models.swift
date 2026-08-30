@@ -139,6 +139,32 @@ struct AppSettings: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Build Mode
+/// 本次执行的构建方式（用于日志/UI 展示"完整构建 / 增量构建 / 缓存复用"）。
+/// `cached`（直接复用旧产物、跳过 xcodebuild）当前不会被产出：
+/// 免费签名必须重跑签名阶段才能刷新有效期，见 BuildCacheDecision 文档。
+enum BuildMode: String, Codable, Sendable {
+    case full
+    case incremental
+    case cached
+
+    var label: String {
+        switch self {
+        case .full: return "完整构建"
+        case .incremental: return "增量构建"
+        case .cached: return "缓存复用"
+        }
+    }
+
+    var color: String {
+        switch self {
+        case .full: return "blue"
+        case .incremental: return "green"
+        case .cached: return "teal"
+        }
+    }
+}
+
 // MARK: - Device Install Summary
 /// Structured per-device install outcome recorded with a build log entry,
 /// so scheduled runs can be audited ("哪台设备装了哪个 App") without
@@ -168,10 +194,13 @@ struct BuildLogEntry: Identifiable, Codable, Equatable, Hashable, Sendable {
     var logFile: String? = nil
     /// Manual (GUI) or scheduled (worker) execution. nil = legacy entry.
     var source: ExecutionSource? = nil
-    /// Main .app that was built and installed (nil = not recorded).
-    var installedAppPath: String? = nil
+    /// 本次解析/生成出来的主 .app 产物路径（安装失败时也可能存在）。
+    /// v1.6 前的字段名是 installedAppPath，解码时兼容读取。
+    var builtAppPath: String? = nil
     /// Per-device install outcomes for this run (nil = not recorded).
     var deviceInstallSummaries: [DeviceInstallSummary]? = nil
+    /// 构建方式（完整/增量/缓存复用）。nil = 旧版日志。
+    var buildMode: BuildMode? = nil
 
     var durationText: String {
         let m = Int(durationSeconds) / 60
@@ -308,7 +337,9 @@ extension BuildLogEntry {
     private enum CodingKeys: String, CodingKey {
         case id, date, projectName, status, output, durationSeconds
         case failedDevices, sourceIdentifier, logFile, source
-        case installedAppPath, deviceInstallSummaries
+        case builtAppPath, deviceInstallSummaries, buildMode
+        // v1.6 前的字段名，仅用于解码兼容
+        case legacyInstalledAppPath = "installedAppPath"
     }
 
     init(from decoder: Decoder) throws {
@@ -323,8 +354,28 @@ extension BuildLogEntry {
         sourceIdentifier = try c.decodeIfPresent(String.self, forKey: .sourceIdentifier)
         logFile = try c.decodeIfPresent(String.self, forKey: .logFile)
         source = try c.decodeIfPresent(ExecutionSource.self, forKey: .source)
-        installedAppPath = try c.decodeIfPresent(String.self, forKey: .installedAppPath)
+        builtAppPath = try c.decodeIfPresent(String.self, forKey: .builtAppPath)
+            ?? c.decodeIfPresent(String.self, forKey: .legacyInstalledAppPath)
         deviceInstallSummaries = try c.decodeIfPresent([DeviceInstallSummary].self, forKey: .deviceInstallSummaries)
+        buildMode = try c.decodeIfPresent(BuildMode.self, forKey: .buildMode)
+    }
+
+    // 旧字段名 installedAppPath 仅用于解码兼容；编码只写 builtAppPath。
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(date, forKey: .date)
+        try c.encode(projectName, forKey: .projectName)
+        try c.encode(status, forKey: .status)
+        try c.encode(output, forKey: .output)
+        try c.encode(durationSeconds, forKey: .durationSeconds)
+        try c.encodeIfPresent(failedDevices, forKey: .failedDevices)
+        try c.encodeIfPresent(sourceIdentifier, forKey: .sourceIdentifier)
+        try c.encodeIfPresent(logFile, forKey: .logFile)
+        try c.encodeIfPresent(source, forKey: .source)
+        try c.encodeIfPresent(builtAppPath, forKey: .builtAppPath)
+        try c.encodeIfPresent(deviceInstallSummaries, forKey: .deviceInstallSummaries)
+        try c.encodeIfPresent(buildMode, forKey: .buildMode)
     }
 }
 

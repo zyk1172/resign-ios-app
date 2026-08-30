@@ -2,6 +2,15 @@
 
 ## 1.6.0（2026-08-30）
 
+- **增量构建缓存（免重复编译）**：
+  - 构建工作区（DerivedData）从 /tmp 迁移到 `Application Support/Resign/DerivedData/<项目UUID>` 并**默认保留**，重启不再丢失，Xcode 增量编译生效——源码未变化时编译阶段被完全跳过（实测 21 文件工程：冷构建 12.7s → 未变化 3.1s，约 **75%** 节省；越大越明显）；
+  - 每次构建前仅清空本配置的**产物目录（.app）**，强制 xcodebuild 重跑签名阶段——免费签名 7 天有效期照常刷新（直接重装旧签名 .app 不会刷新 profile，因此不做产物级复用）；
+  - `ProjectFingerprintService` 计算项目指纹（工程配置 + 源码/资源/依赖清单内容哈希；排除 .git/build/DerivedData/xcuserdata 等），`BuildCacheManager` 保存每项目元数据并给出带原因的缓存决策，日志输出 `=== CACHE ===` 段；
+  - 失效条件：源码/资源/工程文件变化、依赖清单（Package.resolved 等）变化、Scheme/Configuration/平台/Team 变化、项目路径变化、Xcode 版本变化、工作区缺失；工作区损坏（特征错误如 no such module）自动**回退 clean build** 一次；
+  - 每次安装日志输出嵌入 profile 的**签名有效期**（"签名有效期至: …"），续签是否刷新直接可查；
+  - 项目设置新增「清除构建缓存」按钮（构建进行中拒绝执行；只删除 Resign 管理路径）；
+  - 日志/明细显示构建方式徽章：完整构建 / 增量构建。
+- 评审遗留修复：Worker 落盘失败时通知不再显示"全部成功"（通知优先级：保存失败 > 执行失败 > 成功）；`installedAppPath` 重命名为更准确的 `builtAppPath`（旧字段解码兼容）；`ProjectPreview` 用 projectID 做 SwiftUI identity（支持同名项目）。
 - 调度页新增**「执行明细」面板**，用于核实定时任务：
   - **下次定时检查将执行**：每个启用项目的到期状态徽章（首次执行/已到期/未到期）、安装目标（自动选第一台 / 指定设备名列表 / 本机 /Applications）与上次成功时间；
   - **最近定时执行记录**：时间、项目、状态、安装的 App 产物名、逐设备结果胶囊（✓/✗，重试次数 ×N）；

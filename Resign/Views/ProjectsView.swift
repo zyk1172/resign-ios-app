@@ -750,6 +750,16 @@ struct ProjectEditSheet: View {
 
             // Actions
             HStack {
+                Button(role: .destructive) {
+                    store.clearBuildCache(for: project)
+                } label: {
+                    Label("清除构建缓存", systemImage: "trash.square")
+                        .font(.system(size: AppStyle.captionSize, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.isBuilding)
+                .help("删除该项目的增量构建工作区与缓存元数据；下次执行将完整重建。不会影响项目源码。")
+
                 Spacer()
                 Button("取消") { dismiss() }
                     .keyboardShortcut(.cancelAction)
