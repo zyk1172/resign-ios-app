@@ -8,7 +8,23 @@ import Foundation
 /// Schema: versioned. A v1 config (no `schemaVersion` key) is migrated once:
 /// oversized inline log outputs are externalized, and the legacy per-project
 /// epoch files (`logs/state/<uuid>.epoch`) are folded into executionStates.
+/// All write failures propagate as thrown errors — acquiring the lock is not
+/// reported as success.
 struct ConfigStore: Sendable {
+    enum ConfigStoreError: LocalizedError {
+        case lockUnavailable
+        case writeFailed(underlying: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .lockUnavailable:
+                return "config.lock 被长期占用，无法完成配置写入"
+            case .writeFailed(let underlying):
+                return "配置写入失败：\(underlying)"
+            }
+        }
+    }
+
     let directory: URL
 
     private let ioQueue = DispatchQueue(label: "com.resign.config.io")
@@ -28,16 +44,27 @@ struct ConfigStore: Sendable {
 
     /// Loads the state, running the one-time v1 → v2 migration when needed.
     /// Never throws: a missing or unreadable config yields defaults plus an
-    /// error string for the caller to surface.
+    /// error string for the caller to surface (the scheduled worker treats a
+    /// decode failure as a hard exit, not an empty run).
     func load() -> (state: PersistedState, error: String?) {
         ioQueue.sync {
             let (state, decodeError) = readState()
-            if state.schemaVersion < PersistedState.currentSchemaVersion {
-                let migrated = Self.migrate(from: state, directory: directory, logRepository: logRepository)
-                writeState(migrated)
-                return (migrated, decodeError)
+            guard state.schemaVersion < PersistedState.currentSchemaVersion else {
+                return (state, decodeError)
             }
-            return (state, decodeError)
+
+            let migrated = Self.migrate(from: state, directory: directory, logRepository: logRepository)
+            var error = decodeError
+            do {
+                try performUnderConfigLock { _ in try writeState(migrated) }
+            } catch {
+                // 迁移结果只在本次内存中生效；不删除旧 epoch 文件，
+                // 下次启动会基于未写入的旧文件重试迁移（幂等）。
+                let messages = [decodeError, "迁移写入失败：\(error.localizedDescription)"].compactMap { $0 }
+                return (migrated, messages.joined(separator: "\n"))
+            }
+            Self.removeLegacyEpochFiles(directory: directory)
+            return (migrated, error)
         }
     }
 
@@ -45,19 +72,24 @@ struct ConfigStore: Sendable {
 
     /// Fire-and-forget save for the GUI: merges the in-memory snapshot with
     /// whatever landed on disk meanwhile (e.g. worker results) and writes.
+    /// Write failures are reported to stderr — they are never silently
+    /// treated as success.
     func enqueueSave(_ state: PersistedState) {
         ioQueue.async { [directory] in
-            ConfigStore(directory: directory).saveSynchronously(state)
+            do {
+                try ConfigStore(directory: directory).saveSynchronously(state)
+            } catch {
+                FileHandle.standardError.write(Data("Resign: \(error.localizedDescription)\n".utf8))
+            }
         }
     }
 
     /// Synchronous save with merge; used by tests and callers that must wait.
-    @discardableResult
-    func saveSynchronously(_ state: PersistedState) -> Bool {
-        ioQueue.sync {
-            performUnderConfigLock { diskState in
+    func saveSynchronously(_ state: PersistedState) throws {
+        try ioQueue.sync {
+            try performUnderConfigLock { diskState in
                 let merged = Self.merge(local: state, disk: diskState)
-                writeState(merged)
+                try writeState(merged)
             }
         }
     }
@@ -65,30 +97,28 @@ struct ConfigStore: Sendable {
     // MARK: - Write (worker)
 
     /// Atomic read-modify-write used by the scheduled worker to record one
-    /// execution result without clobbering concurrent GUI edits.
-    @discardableResult
-    func updateSynchronously(_ mutate: (inout PersistedState) -> Void) -> Bool {
-        ioQueue.sync {
-            performUnderConfigLock { diskState in
+    /// execution result without clobbering concurrent GUI edits. Throws when
+    /// the lock cannot be acquired or the write fails.
+    func updateSynchronously(_ mutate: (inout PersistedState) -> Void) throws {
+        try ioQueue.sync {
+            try performUnderConfigLock { diskState in
                 var state = diskState ?? PersistedState()
                 mutate(&state)
-                writeState(state)
+                try writeState(state)
             }
         }
     }
 
     /// Runs `body` with the freshly-read disk state while holding the config
     /// lock; body performs the write before returning.
-    private func performUnderConfigLock(_ body: (PersistedState?) -> Void) -> Bool {
+    private func performUnderConfigLock(_ body: (PersistedState?) throws -> Void) throws {
         let lock = FileLock(path: lockPath)
         guard lock.acquireWithRetry(attempts: 50, delayMilliseconds: 100) else {
-            FileHandle.standardError.write(Data("Resign: config.lock 被长期占用，跳过本次写入\n".utf8))
-            return false
+            throw ConfigStoreError.lockUnavailable
         }
         defer { lock.release() }
         let (diskState, _) = readState()
-        body(diskState)
-        return true
+        try body(diskState)
     }
 
     // MARK: - Encoding
@@ -108,7 +138,7 @@ struct ConfigStore: Sendable {
         }
     }
 
-    private func writeState(_ state: PersistedState) {
+    private func writeState(_ state: PersistedState) throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -116,7 +146,7 @@ struct ConfigStore: Sendable {
             let data = try encoder.encode(state)
             try data.write(to: configURL, options: [.atomic, .completeFileProtectionUnlessOpen])
         } catch {
-            FileHandle.standardError.write(Data("Resign: 配置保存失败：\(error.localizedDescription)\n".utf8))
+            throw ConfigStoreError.writeFailed(underlying: error.localizedDescription)
         }
     }
 
@@ -180,7 +210,9 @@ struct ConfigStore: Sendable {
         }
 
         // 2) Legacy epoch files → ProjectExecutionState. Applied only to
-        //    projects that still exist; files are removed after the read.
+        //    projects that still exist. The files themselves are removed by
+        //    `removeLegacyEpochFiles` after the migrated state is
+        //    successfully persisted, so a failed write never loses them.
         let stateDirectory = directory
             .appendingPathComponent("logs", isDirectory: true)
             .appendingPathComponent("state", isDirectory: true)
@@ -188,7 +220,6 @@ struct ConfigStore: Sendable {
         if let files = try? FileManager.default.contentsOfDirectory(at: stateDirectory, includingPropertiesForKeys: nil) {
             let knownProjectIDs = Set(migrated.projects.map(\.id))
             for url in files where url.pathExtension == "epoch" {
-                defer { try? FileManager.default.removeItem(at: url) }
                 guard let uuid = UUID(uuidString: url.deletingPathExtension().lastPathComponent),
                       knownProjectIDs.contains(uuid),
                       let raw = try? String(contentsOf: url, encoding: .utf8)
@@ -209,5 +240,19 @@ struct ConfigStore: Sendable {
         migrated.executionStates = states
         migrated.schemaVersion = PersistedState.currentSchemaVersion
         return migrated
+    }
+
+    /// Removes the legacy epoch sidecar files. Only called after the migrated
+    /// state has been successfully written to config.json.
+    private static func removeLegacyEpochFiles(directory: URL) {
+        let stateDirectory = directory
+            .appendingPathComponent("logs", isDirectory: true)
+            .appendingPathComponent("state", isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(at: stateDirectory, includingPropertiesForKeys: nil) else {
+            return
+        }
+        for url in files where url.pathExtension == "epoch" {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }

@@ -28,6 +28,20 @@ struct MacAppInstaller: Sendable {
             return Outcome(success: false, output: "错误：产物名称非法，已停止安装")
         }
 
+        // 进程名 ≠ .app 文件名（如 "My Nice App.app" 的可执行名是 MyNiceApp）。
+        // 以 Info.plist 的 CFBundleExecutable/CFBundleIdentifier 为准。
+        let infoPlistURL = URL(fileURLWithPath: appPath)
+            .appendingPathComponent("Contents/Info.plist")
+        var executableName = baseName
+        var bundleID: String?
+        if let data = try? Data(contentsOf: infoPlistURL),
+           let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] {
+            if let name = plist["CFBundleExecutable"] as? String, !name.isEmpty {
+                executableName = name
+            }
+            bundleID = plist["CFBundleIdentifier"] as? String
+        }
+
         let fileManager = FileManager.default
         let destination = applicationsDirectory.appendingPathComponent(bundleName)
         let staging = applicationsDirectory.appendingPathComponent(".\(baseName).installing.app")
@@ -35,14 +49,21 @@ struct MacAppInstaller: Sendable {
             .appendingPathComponent("Resign.previous.\(UUID().uuidString).\(bundleName)")
 
         // 1) A running instance must not be replaced under its own feet.
-        if await isRunning(baseName) {
+        //    优雅退出（按 bundle id 精确寻址）→ 校验 → TERM → 再次校验；
+        //    仍不退出则中止安装，绝不替换一个还活着的应用。
+        if await isRunning(executableName) {
             log += "检测到 \(baseName) 正在运行，请求退出…\n"
-            _ = await runner.run("/usr/bin/osascript", arguments: ["-e", "quit app \"\(baseName)\""])
+            let quitScript = bundleID.map { "quit app id \"\($0)\"" } ?? "quit app \"\(baseName)\""
+            _ = await runner.run("/usr/bin/osascript", arguments: ["-e", quitScript])
             try? await Task.sleep(for: .seconds(1))
-            if await isRunning(baseName) {
+            if await isRunning(executableName) {
                 log += "仍未退出，发送 TERM 信号…\n"
-                _ = await runner.run("/usr/bin/pkill", arguments: ["-TERM", "-x", baseName])
+                _ = await runner.run("/usr/bin/pkill", arguments: ["-TERM", "-x", executableName])
                 try? await Task.sleep(for: .seconds(1))
+                if await isRunning(executableName) {
+                    log += "错误：\(baseName) 未能退出，已保留现有安装。请手动退出后重试。\n"
+                    return Outcome(success: false, output: log)
+                }
             }
         }
 
@@ -103,5 +124,4 @@ struct MacAppInstaller: Sendable {
     private func isRunning(_ processName: String) async -> Bool {
         let result = await runner.run("/usr/bin/pgrep", arguments: ["-x", processName])
         return result.exitCode == 0
-    }
-}
+    }}

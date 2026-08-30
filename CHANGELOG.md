@@ -1,5 +1,16 @@
 # 更新记录
 
+## 1.5.1（2026-08-30）
+
+审查修复（架构评审后补齐的可靠性缺口）：
+
+- **Worker 不再静默失败**：config.json 读取失败时以 exit 3 中止（旧版会当作空配置 exit 0，launchd 记为成功，用户误以为后台续签正常）；执行结果无法落盘时以 exit 4 报告。退出码语义：0 正常 / 1 构建·安装失败 / 2 无效调用 / 3 配置无效 / 4 落盘失败；
+- **配置写入失败全链路传播**：`ConfigStore` 的写入错误不再被吞掉——拿到锁 ≠ 写入成功，磁盘满/权限异常时 Worker 与 GUI 均能感知；v1→v2 迁移改为"写入成功后才删除旧 epoch 文件"，写失败不会丢迁移依据；
+- **首次失败即记录失败摘要**：`ProjectExecutionState.lastFailureSummary` 在新建执行状态时同样写入，不再等第二次失败；
+- **macOS 安装器进程识别修正**：改读 Info.plist 的 `CFBundleExecutable`/`CFBundleIdentifier`（.app 文件名 ≠ 进程名），优雅退出按 bundle id 精确寻址；TERM 后再次校验，应用拒绝退出则中止安装并保留现有版本，绝不替换还在运行的应用；
+- 显式补充 v1 配置前向兼容测试（无 `platform`/`schemaVersion`/`executionStates` 的旧 JSON 解码回落默认值）；
+- 新增 GitHub Actions CI（macOS runner 跑 xcodegen + 全量单测）与 main 分支保护规则。
+
 ## 1.5.0（2026-08-30）
 
 架构级重构：**消除双执行引擎**，统一为一份 Swift 构建核心。

@@ -17,6 +17,7 @@ final class MacAppInstallerTests: XCTestCase {
         builtApp = root.appendingPathComponent("built/Demo.app", isDirectory: true)
         try FileManager.default.createDirectory(at: builtApp.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
         try Data("newbinary".utf8).write(to: builtApp.appendingPathComponent("Contents/MacOS/Demo"))
+        try makeInfoPlist().write(to: builtApp.appendingPathComponent("Contents/Info.plist"), atomically: true, encoding: .utf8)
 
         runner = MockProcessRunner()
     }
@@ -46,6 +47,20 @@ final class MacAppInstallerTests: XCTestCase {
             withIntermediateDirectories: true
         )
         try Data(payload.utf8).write(to: applications.appendingPathComponent("Demo.app/Contents/MacOS/Demo"))
+        try makeInfoPlist().write(to: applications.appendingPathComponent("Demo.app/Contents/Info.plist"), atomically: true, encoding: .utf8)
+    }
+
+    /// CFBundleExecutable 与 .app 文件名不同名的场景也用同一夹具覆盖：
+    /// 这里故意让可执行名 == Demo，同时提供 bundle id 供精确退出。
+    private func makeInfoPlist() -> String {
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+            <key>CFBundleExecutable</key><string>Demo</string>
+            <key>CFBundleIdentifier</key><string>com.resign.test.demo</string>
+        </dict></plist>
+        """
     }
 
     // MARK: - Fresh install
@@ -93,19 +108,42 @@ final class MacAppInstallerTests: XCTestCase {
         XCTAssertTrue(executables.contains("/usr/bin/osascript"))
         XCTAssertFalse(executables.contains("/usr/bin/pkill"), "优雅退出成功后不应强杀")
         XCTAssertTrue(outcome.output.contains("正在运行"))
+        let osascript = try XCTUnwrap(runner.recordedCalls.first { $0.executable == "/usr/bin/osascript" })
+        XCTAssertEqual(osascript.arguments, ["-e", "quit app id \"com.resign.test.demo\""], "必须按 bundle id 精确寻址退出")
     }
 
     func testSendsTermWhenGracefulQuitFails() async throws {
-        // pgrep#1: running → osascript → pgrep#2: still running → pkill
+        // pgrep#1: running → osascript → pgrep#2: still running → pkill → pgrep#3: exited
         runner.enqueue(makeProcessResult(exitCode: 0)) // pgrep: running
         runner.enqueue(makeProcessResult(exitCode: 0)) // osascript
         runner.enqueue(makeProcessResult(exitCode: 0)) // pgrep: still running
+        runner.enqueue(makeProcessResult(exitCode: 0)) // pkill
+        runner.enqueue(makeProcessResult(exitCode: 1)) // pgrep: gone
 
-        _ = await installer.install(appPath: builtApp.path)
+        let outcome = await installer.install(appPath: builtApp.path)
 
+        XCTAssertTrue(outcome.success, outcome.output)
         XCTAssertTrue(runner.recordedCalls.contains { call in
             call.executable == "/usr/bin/pkill" && call.arguments.contains("Demo")
         })
+    }
+
+    func testAbortsWhenAppRefusesToQuit() async throws {
+        // pgrep#1: running → osascript → pgrep#2: still running → pkill → pgrep#3: STILL running
+        try createInstalledApp(payload: "old")
+        runner.enqueue(makeProcessResult(exitCode: 0)) // pgrep: running
+        runner.enqueue(makeProcessResult(exitCode: 0)) // osascript
+        runner.enqueue(makeProcessResult(exitCode: 0)) // pgrep: still running
+        runner.enqueue(makeProcessResult(exitCode: 0)) // pkill
+        runner.enqueue(makeProcessResult(exitCode: 0)) // pgrep: STILL running
+
+        let outcome = await installer.install(appPath: builtApp.path)
+
+        XCTAssertFalse(outcome.success)
+        XCTAssertTrue(outcome.output.contains("未能退出"))
+        XCTAssertEqual(installedPayload(), "old", "应用拒绝退出时必须中止，绝不替换还在运行的应用")
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: applications.path)
+        XCTAssertFalse(leftovers.contains { $0.hasPrefix(".") }, "中止时暂存目录不应残留")
     }
 
     // MARK: - Failure paths

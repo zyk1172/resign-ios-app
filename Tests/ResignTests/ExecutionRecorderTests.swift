@@ -74,6 +74,20 @@ final class ExecutionRecorderTests: XCTestCase {
         XCTAssertEqual(state.executionStates.first?.lastStatus, .cancelled)
     }
 
+    func testFirstEverFailureRecordsFailureSummary() {
+        // 项目第一次运行就失败：execution state 是新建的，
+        // lastFailureSummary 也必须立刻写入，而不是等第二次失败。
+        apply(
+            BuildResult(success: false, output: "error: No Account for Team \"XXXX\". Add a new account in Accounts settings"),
+            startedAt: Date(timeIntervalSince1970: 5_000)
+        )
+
+        let executionState = state.executionStates.first
+        XCTAssertEqual(executionState?.lastStatus, .failed)
+        XCTAssertNil(executionState?.lastSuccessfulInstallDate)
+        XCTAssertEqual(executionState?.lastFailureSummary?.contains("没有登录 Xcode"), true)
+    }
+
     func testUpsertDoesNotDuplicateExecutionState() {
         apply(BuildResult(success: true, output: "ok"))
         apply(BuildResult(success: true, output: "ok again"))

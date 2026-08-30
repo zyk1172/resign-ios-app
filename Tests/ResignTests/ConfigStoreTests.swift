@@ -22,6 +22,28 @@ final class ConfigStoreTests: XCTestCase {
 
     // MARK: - v1 → v2 migration
 
+    func testV1ProjectWithoutPlatformDecodesAsIOS() throws {
+        // 显式验证 macOS 平台字段的前向兼容：v1 项目 JSON 没有 platform，
+        // 解码后必须回落为 .ios，而不是整体解码失败。
+        let projectID = UUID()
+        let v1Config = """
+        {
+          "schemaVersion": 2,
+          "projects": [{"id": "\(projectID.uuidString)", "name": "Legacy", "projectPath": "/tmp/Legacy.xcodeproj"}],
+          "settings": {},
+          "executionStates": [],
+          "logs": []
+        }
+        """
+        try writeConfig(v1Config)
+
+        let loaded = ConfigStore(directory: directory).load()
+        XCTAssertNil(loaded.error)
+        let project = try XCTUnwrap(loaded.state.projects.first)
+        XCTAssertEqual(project.platform, .ios)
+        XCTAssertEqual(project.configuration, "Debug")
+    }
+
     func testV1ConfigMigratesSchemaEpochsAndFatLogs() throws {
         let projectID = UUID()
         let fatOutput = String(repeating: "x", count: 100_000)
@@ -134,16 +156,27 @@ final class ConfigStoreTests: XCTestCase {
         let store = ConfigStore(directory: directory)
         let projectID = UUID()
 
-        store.updateSynchronously { state in
+        try store.updateSynchronously { state in
             state.projects.append(iOSProject(id: projectID, name: "A", projectPath: "/tmp/A.xcodeproj"))
         }
-        store.updateSynchronously { state in
+        try store.updateSynchronously { state in
             state.logs.append(BuildLogEntry(date: Date(), projectName: "A", status: .success, output: "run", durationSeconds: 3))
         }
 
         let loaded = store.load()
         XCTAssertEqual(loaded.state.projects.count, 1)
         XCTAssertEqual(loaded.state.logs.count, 1)
+    }
+
+    func testUpdateFailurePropagatesInsteadOfReportingSuccess() throws {
+        let store = ConfigStore(directory: directory)
+
+        // config 目录被一个不可写的同名"目录"占位，写入必然失败；
+        // updateSynchronously 必须抛错，而不是把"拿到锁"当成功。
+        let bogusConfig = directory.appendingPathComponent("config.json")
+        try FileManager.default.createDirectory(at: bogusConfig, withIntermediateDirectories: true)
+
+        XCTAssertThrowsError(try store.updateSynchronously { _ in })
     }
 
     func testGUISaveDoesNotClobberWorkerLogEntries() throws {
@@ -156,10 +189,10 @@ final class ConfigStoreTests: XCTestCase {
             settings: AppSettings(),
             logs: []
         )
-        store.saveSynchronously(guiState)
+        try store.saveSynchronously(guiState)
 
         // Worker records a result directly on disk while the GUI stays open.
-        store.updateSynchronously { state in
+        try store.updateSynchronously { state in
             ExecutionRecorder.apply(
                 .init(
                     projectID: projectID,
@@ -175,7 +208,7 @@ final class ConfigStoreTests: XCTestCase {
 
         // GUI saves its (stale) snapshot again — merge must preserve the
         // worker's log entry, execution state and newer project fields.
-        store.saveSynchronously(guiState)
+        try store.saveSynchronously(guiState)
 
         let loaded = store.load()
         XCTAssertTrue(loaded.state.logs.contains { $0.output == "worker output" && $0.source == .scheduled })
