@@ -109,6 +109,41 @@ final class ConfigStoreTests: XCTestCase {
         XCTAssertNil(loaded.error)
     }
 
+    func testLegacyInstalledAppPathDecodesIntoBuiltAppPath() throws {
+        // 评审 §19.26：旧日志只有 installedAppPath，仍必须能读出 builtAppPath。
+        let legacy = """
+        {"date": "2026-08-01T03:00:00Z", "projectName": "A", "status": "success", "output": "ok", "durationSeconds": 1, "installedAppPath": "/tmp/Old.app"}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let entry = try decoder.decode(BuildLogEntry.self, from: Data(legacy.utf8))
+        XCTAssertEqual(entry.builtAppPath, "/tmp/Old.app")
+    }
+
+    func testNewLogEntriesEncodeBuiltAppPathOnly() throws {
+        // 评审 §19.27：新编码只写 builtAppPath，不再写 installedAppPath。
+        let entry = BuildLogEntry(
+            date: Date(),
+            projectName: "A",
+            status: .success,
+            output: "ok",
+            durationSeconds: 1,
+            builtAppPath: "/tmp/New.app",
+            buildMode: .incremental
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let json = String(data: try encoder.encode(entry), encoding: .utf8)!
+        XCTAssertTrue(json.contains("builtAppPath"))
+        XCTAssertFalse(json.contains("installedAppPath"))
+
+        let decodeBack = JSONDecoder()
+        decodeBack.dateDecodingStrategy = .iso8601
+        let decoded = try decodeBack.decode(BuildLogEntry.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.builtAppPath, "/tmp/New.app")
+        XCTAssertEqual(decoded.buildMode, .incremental)
+    }
+
     // MARK: - Merge semantics
 
     func testMergeUnionsLogsAndKeepsNewestExecutionState() {

@@ -42,6 +42,26 @@ final class ScheduledRunCoordinatorTests: XCTestCase {
         XCTAssertTrue(runner.recordedCalls.isEmpty, "无到期项目时不应触碰 xcodebuild/devicectl")
     }
 
+    func testNotificationBodyPriorityPutsPersistenceFailureFirst() {
+        // 评审 §16：落盘失败时绝不能显示"全部成功"。
+        XCTAssertTrue(
+            ScheduledRunCoordinator.notificationBody(persistenceFailed: true, executionFailed: false)
+                .contains("保存失败")
+        )
+        XCTAssertTrue(
+            ScheduledRunCoordinator.notificationBody(persistenceFailed: true, executionFailed: true)
+                .contains("保存失败"), "落盘失败优先于执行失败"
+        )
+        XCTAssertTrue(
+            ScheduledRunCoordinator.notificationBody(persistenceFailed: false, executionFailed: true)
+                .contains("存在失败")
+        )
+        XCTAssertEqual(
+            ScheduledRunCoordinator.notificationBody(persistenceFailed: false, executionFailed: false),
+            "到期项目已全部构建并安装成功"
+        )
+    }
+
     func testDisabledProjectIsNeverDue() async throws {
         let projectID = UUID()
         let config = """

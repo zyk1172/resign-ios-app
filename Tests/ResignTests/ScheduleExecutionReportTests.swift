@@ -70,6 +70,26 @@ final class ScheduleExecutionReportTests: XCTestCase {
         XCTAssertEqual(previews.first?.targetDescription, "自动选择第一台可用设备")
     }
 
+    func testTwoProjectsWithSameNameHaveDistinctIDs() {
+        // 评审 §19.28：项目名不唯一，ProjectPreview identity 必须用 projectID。
+        var first = iOSProject(id: UUID(), name: "App", projectPath: "/tmp/One/App.xcodeproj")
+        first.isEnabled = true
+        var second = iOSProject(id: UUID(), name: "App", projectPath: "/tmp/Two/App.xcodeproj")
+        second.isEnabled = true
+
+        let previews = ScheduleExecutionReport.previews(
+            projects: [first, second],
+            executionStates: [],
+            devices: [],
+            intervalDays: 6
+        )
+
+        XCTAssertEqual(previews.count, 2)
+        XCTAssertEqual(previews[0].id, first.id)
+        XCTAssertEqual(previews[1].id, second.id)
+        XCTAssertNotEqual(previews[0].id, previews[1].id)
+    }
+
     private func now(_ offset: TimeInterval) -> Date {
         Date(timeIntervalSinceReferenceDate: 800_000_000 + offset)
     }

@@ -11,6 +11,7 @@ final class MockProcessRunner: ProcessRunning, @unchecked Sendable {
 
     private let lock = NSLock()
     private var responses: [ProcessResult] = []
+    private var sideEffects: [(Call) -> Void] = []
     private var calls: [Call] = []
     private let defaultResponse: ProcessResult
 
@@ -18,10 +19,16 @@ final class MockProcessRunner: ProcessRunning, @unchecked Sendable {
         self.defaultResponse = defaultResponse
     }
 
-    func enqueue(_ response: ProcessResult) {
+    func enqueue(_ response: ProcessResult, sideEffect: ((Call) -> Void)? = nil) {
         lock.lock()
         defer { lock.unlock() }
         responses.append(response)
+        sideEffects.append(sideEffect ?? { _ in })
+    }
+
+    /// `xcodebuild -version` 响应（缓存决策每个 execute 都会调用一次）。
+    func enqueueVersion(_ version: String = "Xcode 27.0\nBuild version 27A5209h") {
+        enqueue(makeProcessResult(exitCode: 0, stdout: version))
     }
 
     func run(
@@ -31,9 +38,12 @@ final class MockProcessRunner: ProcessRunning, @unchecked Sendable {
         currentDirectory: String?
     ) async -> ProcessResult {
         lock.lock()
-        calls.append(Call(executable: executable, arguments: arguments))
+        let call = Call(executable: executable, arguments: arguments)
+        calls.append(call)
         let response = responses.isEmpty ? defaultResponse : responses.removeFirst()
+        let sideEffect = sideEffects.isEmpty ? nil : sideEffects.removeFirst()
         lock.unlock()
+        sideEffect?(call)
         return response
     }
 

@@ -51,6 +51,22 @@ final class AppStore {
         teamService = DevelopmentTeamService(runner: runner)
 
         load()
+        Task.detached(priority: .utility) {
+            AppPaths.cleanupLegacyTemporaryWorkspaces()
+        }
+    }
+
+    /// 清除某项目的增量构建工作区与缓存元数据（下次执行将完整重建）。
+    /// 构建进行中（锁被占用）时拒绝执行。
+    func clearBuildCache(for project: iOSProject) {
+        do {
+            try BuildCacheManager.clear(projectID: project.id, buildLockPath: AppPaths.buildLockURL.path)
+            statusMessage = "已清除 \(project.name) 的构建缓存"
+            showToast(.success, "已清除构建缓存，下次执行将完整重建")
+        } catch {
+            statusMessage = "清除构建缓存失败：\(error.localizedDescription)"
+            showToast(.error, "清除构建缓存失败：\(error.localizedDescription)")
+        }
     }
 
     // MARK: - Persistence (delegated to ConfigStore — the single source of truth)

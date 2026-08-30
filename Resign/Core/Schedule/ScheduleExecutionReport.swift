@@ -4,7 +4,10 @@ import Foundation
 /// 每个启用项目的到期状态与安装目标，让用户可以在执行前核实
 /// 定时任务的设备/App 选择是否符合预期。
 enum ScheduleExecutionReport {
-    struct ProjectPreview: Equatable, Sendable {
+    struct ProjectPreview: Identifiable, Equatable, Sendable {
+        /// SwiftUI identity 用 projectID——项目名不唯一（两个目录都可能有
+        /// App.xcodeproj），不能用 name 做 ForEach identity。
+        var id: UUID
         var name: String
         var platform: ProjectPlatform
         var due: Bool
@@ -31,6 +34,7 @@ enum ScheduleExecutionReport {
                     now: now
                 )
                 return ProjectPreview(
+                    id: project.id,
                     name: project.name,
                     platform: project.platform,
                     due: due,
