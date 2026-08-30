@@ -56,6 +56,7 @@
 		857BBDDF164C1EE03D45B3EE /* AppIconService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFC292CC81AD264926D90747 /* AppIconService.swift */; };
 		8EB484F8D4B67DBCD97548A0 /* ProcessRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFAC60EA979AD2BBA91DAA20 /* ProcessRunner.swift */; };
 		8F37AFAE5DDB31241D93EEEC /* ScheduleExecutionReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F60D2D4134D9283B78B4C92D /* ScheduleExecutionReport.swift */; };
+		8FE02136033AB4CB3967EA7C /* ProvisioningProfileServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7968E65F21FA71482E39D74 /* ProvisioningProfileServiceTests.swift */; };
 		906CFF3CB80FBDDD32103780 /* XcodeToolchain.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9CD916C19331C63C5F1CBFD /* XcodeToolchain.swift */; };
 		90A51D5BB9DD9AAB3FE50EAF /* ProjectFingerprintService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D088FC94855722B27BE332 /* ProjectFingerprintService.swift */; };
 		9C0A5909B939708A3412C489 /* MacAppInstallerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 054D2DF571A2B84B4E858465 /* MacAppInstallerTests.swift */; };
@@ -66,6 +67,7 @@
 		A90728F1C6D96E07FCB5F1A1 /* FailureClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1D9FFE8E04E86CDA5DD04BA /* FailureClassifierTests.swift */; };
 		AB899E3C34397B0727020AD3 /* ConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE64871CDBE393810085F77B /* ConfigStore.swift */; };
 		AD58D4267E30603D2456A4FB /* MacAppInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E0B648CC893E372A92376F2 /* MacAppInstaller.swift */; };
+		B916F57911FA672B2D2585BA /* ProvisioningProfileService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F44B2075EF3F9A9AB5FE60A4 /* ProvisioningProfileService.swift */; };
 		B94F87AC45FEE0013897E056 /* ExecutionRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AE2F7C00A76EF06FB3EBBB8 /* ExecutionRecorder.swift */; };
 		BE2FDAC856B336F90B0A416A /* BuildCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA3BE015F1992CAFFF383481 /* BuildCoordinator.swift */; };
 		C1C750A9089FE3899182E428 /* BuildExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67CD071EB421B085A702CC14 /* BuildExecutor.swift */; };
@@ -83,6 +85,7 @@
 		DC9CA0F2E861BFCC0D256B36 /* AppPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C0150E6F9B9109311498924 /* AppPaths.swift */; };
 		E8E55A71211731D8DF2DB185 /* LogRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22A7F3D2DEE4023CB13C444 /* LogRepository.swift */; };
 		ED0F64C2E897683CA6E529B8 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 630C9B3255CA9840732E2E0B /* Models.swift */; };
+		F2BD8305A658931F3094B00F /* ProvisioningProfileService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F44B2075EF3F9A9AB5FE60A4 /* ProvisioningProfileService.swift */; };
 		F38CEBF444D2C52218206DCE /* FailureClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A52753EB19A5993578BCCD3 /* FailureClassifier.swift */; };
 		F4495C2E82DAF97F544238E3 /* ResignApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D75FF6C0FC5AF76FD52969BE /* ResignApp.swift */; };
 		F4AE6C439815D23059E828EB /* FileLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69E3DB16685440484B03F2DA /* FileLock.swift */; };
@@ -162,6 +165,7 @@
 		A22A7F3D2DEE4023CB13C444 /* LogRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogRepository.swift; sourceTree = "<group>"; };
 		A3D45D5D8C7318D9E1CA7160 /* ProductResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductResolverTests.swift; sourceTree = "<group>"; };
 		A47EBF52FB3C4F8AB13FDDFC /* AppStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStyle.swift; sourceTree = "<group>"; };
+		A7968E65F21FA71482E39D74 /* ProvisioningProfileServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProvisioningProfileServiceTests.swift; sourceTree = "<group>"; };
 		A81381CD2E6A6416E7E79A78 /* WorkerMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkerMain.swift; sourceTree = "<group>"; };
 		AFC292CC81AD264926D90747 /* AppIconService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconService.swift; sourceTree = "<group>"; };
 		B1D9FFE8E04E86CDA5DD04BA /* FailureClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FailureClassifierTests.swift; sourceTree = "<group>"; };
@@ -177,6 +181,7 @@
 		DFAC60EA979AD2BBA91DAA20 /* ProcessRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessRunner.swift; sourceTree = "<group>"; };
 		E92137CBD252EF4A4757982F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F3656130F1D2973BD668740C /* DevelopmentTeamService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevelopmentTeamService.swift; sourceTree = "<group>"; };
+		F44B2075EF3F9A9AB5FE60A4 /* ProvisioningProfileService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProvisioningProfileService.swift; sourceTree = "<group>"; };
 		F59B9766ADC8EDE06C5E1F7B /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		F60D2D4134D9283B78B4C92D /* ScheduleExecutionReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleExecutionReport.swift; sourceTree = "<group>"; };
 		FA3BE015F1992CAFFF383481 /* BuildCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildCoordinator.swift; sourceTree = "<group>"; };
@@ -197,6 +202,7 @@
 				8EB5D93AB1AD6539512B1741 /* ProductResolver.swift */,
 				72D088FC94855722B27BE332 /* ProjectFingerprintService.swift */,
 				DCC122759B220B5DBCA377D7 /* ProjectScanner.swift */,
+				F44B2075EF3F9A9AB5FE60A4 /* ProvisioningProfileService.swift */,
 				17592B515DC11B40CED62781 /* SchemeService.swift */,
 			);
 			path = Services;
@@ -255,6 +261,7 @@
 				9FD34C7F39993912D9556199 /* LogRepositoryTests.swift */,
 				054D2DF571A2B84B4E858465 /* MacAppInstallerTests.swift */,
 				A3D45D5D8C7318D9E1CA7160 /* ProductResolverTests.swift */,
+				A7968E65F21FA71482E39D74 /* ProvisioningProfileServiceTests.swift */,
 				009997F57129A77A926039C6 /* ResignTests.swift */,
 				628F2AE5860496E755544334 /* RetryPolicyTests.swift */,
 				21D42C1CFD42E3921F9E615B /* ScheduledRunCoordinatorTests.swift */,
@@ -515,6 +522,7 @@
 				90A51D5BB9DD9AAB3FE50EAF /* ProjectFingerprintService.swift in Sources */,
 				C5A6296F5D2A5D6500C34DAC /* ProjectScanner.swift in Sources */,
 				C8D37B1E433D6F5105D17941 /* ProjectsView.swift in Sources */,
+				F2BD8305A658931F3094B00F /* ProvisioningProfileService.swift in Sources */,
 				F4495C2E82DAF97F544238E3 /* ResignApp.swift in Sources */,
 				3629779578C993ECB3884007 /* RetryPolicy.swift in Sources */,
 				4C39349B37A9A5D931732222 /* ScheduleDuePolicy.swift in Sources */,
@@ -543,6 +551,7 @@
 				9C0A5909B939708A3412C489 /* MacAppInstallerTests.swift in Sources */,
 				68AB14C0B2A65E90F703D055 /* MockProcessRunner.swift in Sources */,
 				60690F4AB6EB9AE5678C4A94 /* ProductResolverTests.swift in Sources */,
+				8FE02136033AB4CB3967EA7C /* ProvisioningProfileServiceTests.swift in Sources */,
 				D40AD62A21BDBE69312E1BCB /* ResignTests.swift in Sources */,
 				C916FE392B8B96B39FA07049 /* RetryPolicyTests.swift in Sources */,
 				208A1FB2ECA2867E558CD314 /* ScheduleExecutionReportTests.swift in Sources */,
@@ -574,6 +583,7 @@
 				13786F7B893598BD69BCB108 /* ProductResolver.swift in Sources */,
 				6E2709DCB8B7326BE68969B2 /* ProjectFingerprintService.swift in Sources */,
 				FDCEF9F4F739E829AA4B1ADD /* ProjectScanner.swift in Sources */,
+				B916F57911FA672B2D2585BA /* ProvisioningProfileService.swift in Sources */,
 				7CCA5E814DC5F66BD2A4DAB3 /* RetryPolicy.swift in Sources */,
 				1E54E67F117222F51B1422DA /* ScheduleDuePolicy.swift in Sources */,
 				2224F43E72D2FC8781A2D711 /* ScheduleExecutionReport.swift in Sources */,
