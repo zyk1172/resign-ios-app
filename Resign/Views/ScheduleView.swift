@@ -13,6 +13,7 @@ struct ScheduleView: View {
             VStack(spacing: AppStyle.listSpacing) {
                 toolchainCard
                 scheduleCard
+                executionDetailsCard
                 optionsCard
                 retryCard
                 launchdCard
@@ -83,6 +84,202 @@ struct ScheduleView: View {
                 .padding(.leading, AppStyle.formLabelWidth + 10)
         }
         .card()
+    }
+
+    // MARK: - 执行明细（核实定时任务执行什么、装到哪、装了什么）
+
+    private var executionDetailsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("执行明细", systemImage: "list.bullet.rectangle")
+                .font(.system(size: AppStyle.cardTitleSize, weight: .semibold))
+
+            // ── 下次定时检查将执行 ──
+            subHeader("下次定时检查将执行")
+            let previews = ScheduleExecutionReport.previews(
+                projects: store.projects,
+                executionStates: store.executionStates,
+                devices: store.devices,
+                intervalDays: store.settings.resignIntervalDays
+            )
+            if previews.isEmpty {
+                Text("没有已启用的项目")
+                    .font(.system(size: AppStyle.captionSize))
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, AppStyle.formLabelWidth + 10)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(previews, id: \.name) { preview in
+                        previewRow(preview)
+                    }
+                }
+            }
+
+            Divider()
+
+            // ── 最近定时执行记录 ──
+            subHeader("最近定时执行记录")
+            let recent = Array(store.logs.filter { $0.source == .scheduled }.prefix(8))
+            if recent.isEmpty {
+                Text("暂无定时执行记录（定时任务首次运行后显示在这里）")
+                    .font(.system(size: AppStyle.captionSize))
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, AppStyle.formLabelWidth + 10)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(recent) { entry in
+                        scheduledRunRow(entry)
+                    }
+                }
+            }
+        }
+        .card()
+    }
+
+    private func previewRow(_ preview: ScheduleExecutionReport.ProjectPreview) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(preview.name)
+                    .font(.system(size: AppStyle.listTitleSize, weight: .semibold))
+                    .lineLimit(1)
+                dueBadge(preview)
+                Spacer()
+                if let date = preview.lastSuccessfulInstallDate {
+                    Text("上次成功 \(date.formatted(.relative(presentation: .named)))")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Text("从未成功安装")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.orange)
+                }
+            }
+            HStack(spacing: 4) {
+                Image(systemName: preview.platform == .macos ? "desktopcomputer" : "iphone")
+                    .font(.system(size: 9))
+                Text("目标：\(preview.targetDescription)")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+    }
+
+    /// 到期状态徽章：从未成功 → 首次执行（蓝）；已到期 → 已到期（橙）；否则未到期（灰）。
+    private func dueBadge(_ preview: ScheduleExecutionReport.ProjectPreview) -> some View {
+        let text: String
+        let color: Color
+        if preview.lastSuccessfulInstallDate == nil {
+            text = "首次执行"
+            color = .blue
+        } else if preview.due {
+            text = "已到期"
+            color = .orange
+        } else {
+            text = "未到期"
+            color = .gray
+        }
+        return Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .padding(.horizontal, AppStyle.badgeHPadding - 2)
+            .padding(.vertical, 1)
+            .background(Capsule().fill(color.opacity(0.12)))
+            .foregroundStyle(color)
+    }
+
+    private func scheduledRunRow(_ entry: BuildLogEntry) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: entry.status.symbolName)
+                    .font(.system(size: 11))
+                    .foregroundStyle(statusColor(entry.status))
+                Text(entry.projectName)
+                    .font(.system(size: AppStyle.listTitleSize, weight: .semibold))
+                    .lineLimit(1)
+                Spacer()
+                Text(entry.date.formatted(.dateTime.month().day().hour().minute()))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+            runDetailLine(entry)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.gray.opacity(0.04))
+        }
+    }
+
+    /// 产物 + 逐设备结果行。新日志带结构化摘要；旧版日志回退为失败设备列表。
+    @ViewBuilder
+    private func runDetailLine(_ entry: BuildLogEntry) -> some View {
+        HStack(spacing: 5) {
+            if let appPath = entry.installedAppPath {
+                Text(URL(fileURLWithPath: appPath).lastPathComponent)
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .help(appPath)
+            }
+
+            if let summaries = entry.deviceInstallSummaries, !summaries.isEmpty {
+                ForEach(summaries, id: \.udid) { summary in
+                    deviceChip(name: summary.deviceName, success: summary.success,
+                               attempts: summary.attempts)
+                }
+            } else if let failed = entry.failedDevices, !failed.isEmpty {
+                ForEach(failed, id: \.self) { name in
+                    deviceChip(name: name, success: false, attempts: nil)
+                }
+                Text("（成功设备未记录）")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            } else if entry.installedAppPath == nil {
+                Text("设备与产物明细未记录（旧版日志）")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func deviceChip(name: String, success: Bool, attempts: Int?) -> some View {
+        let color: Color = success ? .green : .red
+        return HStack(spacing: 3) {
+            Image(systemName: success ? "checkmark" : "xmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(color)
+            Text(name)
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            if let attempts, attempts > 1 {
+                Text("×\(attempts)")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Capsule().fill(color.opacity(0.08)))
+        .help(success ? "安装成功" : "安装失败")
+    }
+
+    private func subHeader(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: AppStyle.captionSize, weight: .semibold))
+            .foregroundStyle(.secondary)
+    }
+
+    private func statusColor(_ status: BuildStatus) -> Color {
+        switch status {
+        case .success:   return .green
+        case .failed:    return .red
+        case .running:   return .blue
+        case .cancelled: return .gray
+        }
     }
 
     // MARK: - 构建选项

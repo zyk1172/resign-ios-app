@@ -139,6 +139,17 @@ struct AppSettings: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Device Install Summary
+/// Structured per-device install outcome recorded with a build log entry,
+/// so scheduled runs can be audited ("哪台设备装了哪个 App") without
+/// parsing raw xcodebuild/devicectl text.
+struct DeviceInstallSummary: Codable, Equatable, Hashable, Sendable {
+    var udid: String
+    var deviceName: String
+    var success: Bool
+    var attempts: Int
+}
+
 // MARK: - Build Log Entry
 struct BuildLogEntry: Identifiable, Codable, Equatable, Hashable, Sendable {
     var id = UUID()
@@ -157,6 +168,10 @@ struct BuildLogEntry: Identifiable, Codable, Equatable, Hashable, Sendable {
     var logFile: String? = nil
     /// Manual (GUI) or scheduled (worker) execution. nil = legacy entry.
     var source: ExecutionSource? = nil
+    /// Main .app that was built and installed (nil = not recorded).
+    var installedAppPath: String? = nil
+    /// Per-device install outcomes for this run (nil = not recorded).
+    var deviceInstallSummaries: [DeviceInstallSummary]? = nil
 
     var durationText: String {
         let m = Int(durationSeconds) / 60
@@ -293,6 +308,7 @@ extension BuildLogEntry {
     private enum CodingKeys: String, CodingKey {
         case id, date, projectName, status, output, durationSeconds
         case failedDevices, sourceIdentifier, logFile, source
+        case installedAppPath, deviceInstallSummaries
     }
 
     init(from decoder: Decoder) throws {
@@ -307,6 +323,8 @@ extension BuildLogEntry {
         sourceIdentifier = try c.decodeIfPresent(String.self, forKey: .sourceIdentifier)
         logFile = try c.decodeIfPresent(String.self, forKey: .logFile)
         source = try c.decodeIfPresent(ExecutionSource.self, forKey: .source)
+        installedAppPath = try c.decodeIfPresent(String.self, forKey: .installedAppPath)
+        deviceInstallSummaries = try c.decodeIfPresent([DeviceInstallSummary].self, forKey: .deviceInstallSummaries)
     }
 }
 

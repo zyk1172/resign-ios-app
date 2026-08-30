@@ -1,10 +1,12 @@
 import Foundation
 
 /// Per-device install result. `output` carries the raw devicectl transcripts so
-/// the coordinator can assemble one complete run log.
+/// the coordinator can assemble one complete run log; `attempts` records how
+/// many install calls this device actually received.
 struct DeviceInstallOutcome: Sendable {
     let udid: String
     let success: Bool
+    let attempts: Int
     let output: String
 }
 
@@ -35,12 +37,14 @@ struct AppInstaller: Sendable {
     ) async -> DeviceInstallOutcome {
         var output = ""
         var installed = false
+        var attempts = 0
 
         deviceLoop: for attempt in 1...retry.maxAttempts {
             if Task.isCancelled {
                 output += "\n任务已取消"
                 break
             }
+            attempts = attempt
             let result = await runner.run(
                 XcodeToolchain.xcrunPath,
                 arguments: ["devicectl", "device", "install", "app", "--device", udid, appPath],
@@ -68,6 +72,6 @@ struct AppInstaller: Sendable {
             }
         }
 
-        return DeviceInstallOutcome(udid: udid, success: installed, output: output)
+        return DeviceInstallOutcome(udid: udid, success: installed, attempts: attempts, output: output)
     }
 }

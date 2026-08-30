@@ -123,6 +123,10 @@ final class BuildCoordinatorTests: XCTestCase {
         XCTAssertTrue(result.success)
         XCTAssertTrue(result.output.contains(appURL.path))
         XCTAssertEqual(result.failedDeviceUDIDs, [])
+        XCTAssertEqual(result.installedAppPath, appURL.path, "产物路径必须结构化记录，供执行明细面板使用")
+
+        let deviceOutcomes = result.deviceOutcomes
+        XCTAssertEqual(deviceOutcomes.map(\.attempts), [1, 1], "单次成功各尝试 1 次")
 
         let xcodebuildCalls = runner.calls(to: "xcodebuild")
         // -showBuildSettings + build

@@ -88,6 +88,23 @@ final class ExecutionRecorderTests: XCTestCase {
         XCTAssertEqual(executionState?.lastFailureSummary?.contains("没有登录 Xcode"), true)
     }
 
+    func testRecordsDeviceSummariesAndInstalledAppPath() {
+        var result = BuildResult(success: false, output: "install output")
+        result.installedAppPath = "/tmp/Demo.app"
+        result.deviceOutcomes = [
+            DeviceInstallOutcome(udid: "D1", success: true, attempts: 1, output: ""),
+            DeviceInstallOutcome(udid: "D2", success: false, attempts: 3, output: "")
+        ]
+        apply(result, source: .scheduled)
+
+        let entry = state.logs.first
+        XCTAssertEqual(entry?.installedAppPath, "/tmp/Demo.app")
+        XCTAssertEqual(entry?.deviceInstallSummaries, [
+            DeviceInstallSummary(udid: "D1", deviceName: "iPhone 15", success: true, attempts: 1),
+            DeviceInstallSummary(udid: "D2", deviceName: "D2", success: false, attempts: 3)
+        ])
+    }
+
     func testUpsertDoesNotDuplicateExecutionState() {
         apply(BuildResult(success: true, output: "ok"))
         apply(BuildResult(success: true, output: "ok again"))

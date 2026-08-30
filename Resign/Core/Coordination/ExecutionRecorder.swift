@@ -59,7 +59,16 @@ enum ExecutionRecorder {
             durationSeconds: input.durationSeconds,
             failedDevices: failedNames.isEmpty ? nil : failedNames,
             logFile: logFile,
-            source: input.source
+            source: input.source,
+            installedAppPath: input.result.installedAppPath,
+            deviceInstallSummaries: input.result.deviceOutcomes.isEmpty ? nil : input.result.deviceOutcomes.map { outcome in
+                DeviceInstallSummary(
+                    udid: outcome.udid,
+                    deviceName: input.deviceNames[outcome.udid] ?? String(outcome.udid.prefix(8)),
+                    success: outcome.success,
+                    attempts: outcome.attempts
+                )
+            }
         )
         state.logs.insert(entry, at: 0)
 
