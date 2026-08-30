@@ -21,12 +21,16 @@ enum ProjectFingerprintService {
         ".swiftpm", "xcuserdata", "Carthage", "fastlane"
     ]
 
-    /// 参与指纹的文件扩展名（小写比较）。
+    /// 参与指纹的文件扩展名（小写比较）。包含常见"直接作为 Bundle
+    /// Resources 的非代码文件"（图片/音视频/字体/PDF 等）。
     static let includedExtensions: Set<String> = [
         "swift", "m", "mm", "h", "hpp", "hh", "c", "cpp", "cc", "cxx", "x", "xmm",
         "plist", "entitlements", "xcconfig", "storyboard", "xib",
         "strings", "stringsdict", "xcstrings", "json", "yaml", "yml",
-        "xcscheme", "modulemap", "spb", "atlas", "scn"
+        "xcscheme", "modulemap", "spb", "atlas", "scn",
+        "png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "pdf",
+        "mp3", "m4a", "wav", "aiff", "caf", "mp4", "mov",
+        "ttf", "otf", "mlmodel", "mlpackage"
     ]
 
     /// 无论扩展名如何都参与指纹的特殊文件名（依赖/工程清单）。
@@ -53,8 +57,9 @@ enum ProjectFingerprintService {
         hasher.update(data: Data(configSection.utf8))
 
         let root = URL(fileURLWithPath: project.projectPath).deletingLastPathComponent()
+        let ownProjectFileName = URL(fileURLWithPath: project.projectPath).lastPathComponent
         var entries: [(path: String, digest: String)] = []
-        try collectEntries(root: root, into: &entries)
+        try collectEntries(root: root, ownProjectFileName: ownProjectFileName, into: &entries)
 
         for entry in entries.sorted(by: { $0.path < $1.path }) {
             hasher.update(data: Data(entry.path.utf8))
@@ -66,7 +71,23 @@ enum ProjectFingerprintService {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func collectEntries(root: URL, into entries: inout [(path: String, digest: String)]) throws {
+    /// 目录直属内容里存在**其他名字**的 .xcodeproj → 该目录是另一个独立
+    /// 工程的根目录，跳过（扫描根本身豁免）。
+    private static func isForeignProjectRoot(_ directory: URL, excluding ownProjectFileName: String) -> Bool {
+        let children = (try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+        )) ?? []
+        return children.contains { child in
+            child.hasDirectoryPath && child.lastPathComponent.hasSuffix(".xcodeproj")
+                && child.lastPathComponent != ownProjectFileName
+        }
+    }
+
+    private static func collectEntries(
+        root: URL,
+        ownProjectFileName: String,
+        into entries: inout [(path: String, digest: String)]
+    ) throws {
         let fileManager = FileManager.default
         guard let enumerator = fileManager.enumerator(
             at: root,
@@ -80,16 +101,18 @@ enum ProjectFingerprintService {
                 let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
                 guard isDirectory else { continue }
 
-                // .xcodeproj / .xcworkspace / .xcassets / .lproj 内部整体参与
-                // （除 xcuserdata），其余按排除与扩展名规则处理。
+                // .xcodeproj / .xcworkspace / .xcassets / .xcdatamodel(d) /
+                // .scnassets / .lproj 内部整体参与（除 xcuserdata）。
                 let isBundleDir = name.hasSuffix(".xcodeproj") || name.hasSuffix(".xcworkspace")
-                let isAssetDir = name.hasSuffix(".xcassets")
-                if skippedDirectoryNames.contains(name) {
+                let isAssetDir = name.hasSuffix(".xcassets") || name.hasSuffix(".xcdatamodeld")
+                    || name.hasSuffix(".xcdatamodel") || name.hasSuffix(".scnassets")
+                if skippedDirectoryNames.contains(name) || name == "xcuserdata" {
                     enumerator.skipDescendants()
-                } else if name == "xcuserdata" {
+                } else if !isBundleDir && !isAssetDir && !name.hasSuffix(".lproj"),
+                          isForeignProjectRoot(url, excluding: ownProjectFileName) {
+                    // 兄弟目录是另一个独立 Xcode 工程（有自己的 .xcodeproj）：
+                    // 其源码变化不影响本工程构建产物，跳过以避免假 cache miss。
                     enumerator.skipDescendants()
-                } else if !isBundleDir && !isAssetDir && !name.hasSuffix(".lproj") {
-                    // 普通目录：继续深入，由文件级规则筛选。
                 }
                 continue
             }

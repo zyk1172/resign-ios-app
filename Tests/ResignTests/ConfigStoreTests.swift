@@ -129,7 +129,7 @@ final class ConfigStoreTests: XCTestCase {
             output: "ok",
             durationSeconds: 1,
             builtAppPath: "/tmp/New.app",
-            buildMode: .incremental
+            buildMode: .incrementalUnchanged
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -141,7 +141,7 @@ final class ConfigStoreTests: XCTestCase {
         decodeBack.dateDecodingStrategy = .iso8601
         let decoded = try decodeBack.decode(BuildLogEntry.self, from: Data(json.utf8))
         XCTAssertEqual(decoded.builtAppPath, "/tmp/New.app")
-        XCTAssertEqual(decoded.buildMode, .incremental)
+        XCTAssertEqual(decoded.buildMode, .incrementalUnchanged)
     }
 
     // MARK: - Merge semantics

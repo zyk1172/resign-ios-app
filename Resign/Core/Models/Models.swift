@@ -140,27 +140,39 @@ struct AppSettings: Codable, Equatable, Sendable {
 }
 
 // MARK: - Build Mode
-/// 本次执行的构建方式（用于日志/UI 展示"完整构建 / 增量构建 / 缓存复用"）。
-/// `cached`（直接复用旧产物、跳过 xcodebuild）当前不会被产出：
-/// 免费签名必须重跑签名阶段才能刷新有效期，见 BuildCacheDecision 文档。
+/// 本次执行的构建方式（日志/UI 展示用）。语义与实际执行严格对应：
+/// - cold：首次构建（无工作区）或工作区被决策性清除后重建；
+/// - incrementalChanged：保留工作区，项目有更新，Xcode 增量编译变化部分；
+/// - incrementalUnchanged：保留工作区，项目未变化，仅重组产物并重新签名；
+/// - cleanFallback：增量工作区损坏，已清除并完整重建（运行时回退）。
 enum BuildMode: String, Codable, Sendable {
-    case full
-    case incremental
-    case cached
+    case cold
+    case incrementalChanged
+    case incrementalUnchanged
+    case cleanFallback
+    // v1.6.0 首发使用过的旧语义值，仅保证旧日志可解码
+    case legacyFull = "full"
+    case legacyIncremental = "incremental"
 
     var label: String {
         switch self {
-        case .full: return "完整构建"
-        case .incremental: return "增量构建"
-        case .cached: return "缓存复用"
+        case .cold: return "首次构建"
+        case .incrementalChanged: return "增量构建 · 项目有更新"
+        case .incrementalUnchanged: return "增量构建 · 项目未变化"
+        case .cleanFallback: return "缓存失效 · 完整重建"
+        case .legacyFull: return "完整构建"
+        case .legacyIncremental: return "增量构建"
         }
     }
 
     var color: String {
         switch self {
-        case .full: return "blue"
-        case .incremental: return "green"
-        case .cached: return "teal"
+        case .cold: return "blue"
+        case .incrementalChanged: return "orange"
+        case .incrementalUnchanged: return "green"
+        case .cleanFallback: return "red"
+        case .legacyFull: return "blue"
+        case .legacyIncremental: return "green"
         }
     }
 }
@@ -357,7 +369,8 @@ extension BuildLogEntry {
         builtAppPath = try c.decodeIfPresent(String.self, forKey: .builtAppPath)
             ?? c.decodeIfPresent(String.self, forKey: .legacyInstalledAppPath)
         deviceInstallSummaries = try c.decodeIfPresent([DeviceInstallSummary].self, forKey: .deviceInstallSummaries)
-        buildMode = try c.decodeIfPresent(BuildMode.self, forKey: .buildMode)
+        // 未知 buildMode 值不致命：置 nil 保留日志本体
+        buildMode = (try? c.decodeIfPresent(BuildMode.self, forKey: .buildMode)) ?? nil
     }
 
     // 旧字段名 installedAppPath 仅用于解码兼容；编码只写 builtAppPath。

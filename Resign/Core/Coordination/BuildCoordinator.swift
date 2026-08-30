@@ -148,12 +148,12 @@ struct BuildCoordinator: Sendable {
                 directory: buildCacheDirectory
             )
         } else {
-            decision = .fullBuild(reason: "项目指纹计算失败，按完整构建处理")
+            decision = .incrementalChangedBuild(reason: "项目指纹计算失败，按增量构建处理（保留工作区）")
         }
         var fullOutput = "=== CACHE ===\n\(decision.logDescription)\n"
 
         do {
-            try Self.prepareWorkspace(workspace, root: derivedDataRoot, clear: false)
+            try Self.prepareWorkspace(workspace, root: derivedDataRoot, clear: decision.clearsWorkspace)
         } catch {
             return BuildResult(success: false, output: fullOutput + "\n错误：无法准备构建工作区：\(error.localizedDescription)")
         }
@@ -176,7 +176,8 @@ struct BuildCoordinator: Sendable {
 
         let retry = request.retryPolicyOverride ?? RetryPolicy(settings: request.settings)
         var buildSucceeded = false
-        var cacheFallbackUsed = false
+        var buildMode = decision.mode
+        var fallbackPending = false
         var attempt = 0
         buildLoop: while attempt < retry.maxAttempts {
             let buildResult = await executor.build(arguments: baseArguments, xcodePath: request.settings.xcodePath)
@@ -190,18 +191,11 @@ struct BuildCoordinator: Sendable {
                 break
             }
 
-            // 增量工作区偶发损坏（模块不兼容等）：清除工作区回退完整构建一次，
+            // 增量工作区损坏（模块不兼容等特征错误）：转入独立的回退阶段，
             // 不消耗重试次数。确定性编译错误不会触发回退。
-            if !cacheFallbackUsed, reusedExistingWorkspace,
-               Self.containsWorkspaceCorruptionMarkers(buildOutput) {
-                cacheFallbackUsed = true
-                fullOutput += "\n⚠️ 检测到增量构建工作区异常，清除工作区后回退完整构建…\n"
-                do {
-                    try Self.prepareWorkspace(workspace, root: derivedDataRoot, clear: true)
-                } catch {
-                    fullOutput += "清除工作区失败：\(error.localizedDescription)\n"
-                }
-                continue
+            if reusedExistingWorkspace, Self.containsWorkspaceCorruptionMarkers(buildOutput) {
+                fallbackPending = true
+                break buildLoop
             }
 
             switch retry.decision(afterAttempt: attempt, failureClass: FailureClassifier.classify(buildOutput)) {
@@ -217,8 +211,27 @@ struct BuildCoordinator: Sendable {
                 break buildLoop
             }
         }
+
+        // 独立的缓存损坏回退阶段：清除工作区后完整重建一次。
+        // 不与 RetryPolicy 的重试次数混算——清了缓存就一定真的重建。
+        if fallbackPending {
+            buildMode = .cleanFallback
+            fullOutput += "\n⚠️ 检测到增量构建工作区异常（模块缓存损坏等），已清除工作区并回退完整重建…\n"
+            do {
+                try Self.prepareWorkspace(workspace, root: derivedDataRoot, clear: true)
+            } catch {
+                fullOutput += "清除工作区失败：\(error.localizedDescription)\n"
+            }
+            let fallbackResult = await executor.build(arguments: baseArguments, xcodePath: request.settings.xcodePath)
+            fullOutput += "=== FALLBACK BUILD（清除工作区后完整重建） ===\n\(fallbackResult.combined)\n"
+            buildSucceeded = fallbackResult.exitCode == 0
+            if !buildSucceeded && !Task.isCancelled {
+                fullOutput += "\n⚠️ 回退完整构建仍失败；工作区已是全新状态，请检查日志中的真实错误。\n"
+            }
+        }
+        if Task.isCancelled && !buildSucceeded { return .cancelledResult(output: fullOutput + "\n任务已取消") }
         guard buildSucceeded else {
-            return BuildResult(success: false, output: fullOutput, buildMode: decision.mode)
+            return BuildResult(success: false, output: fullOutput, buildMode: buildMode)
         }
 
         let appPath: String?
@@ -237,7 +250,7 @@ struct BuildCoordinator: Sendable {
 
         guard let appPath else {
             fullOutput += "\n错误：无法确定本次构建生成的主 .app，已停止安装以避免安装错误产物\n"
-            return BuildResult(success: false, output: fullOutput, buildMode: decision.mode)
+            return BuildResult(success: false, output: fullOutput, buildMode: buildMode)
         }
         fullOutput += "\n本次产物: \(appPath)\n"
 
@@ -287,7 +300,7 @@ struct BuildCoordinator: Sendable {
                 success: outcome.success,
                 output: fullOutput,
                 builtAppPath: appPath,
-                buildMode: decision.mode
+                buildMode: buildMode
             )
 
         case .devices(let deviceUDIDs):
@@ -310,7 +323,7 @@ struct BuildCoordinator: Sendable {
                 failedDeviceUDIDs: failedUDIDs,
                 deviceOutcomes: outcomes,
                 builtAppPath: appPath,
-                buildMode: decision.mode
+                buildMode: buildMode
             )
         }
     }

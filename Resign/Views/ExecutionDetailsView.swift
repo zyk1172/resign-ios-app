@@ -231,9 +231,12 @@ struct ScheduledRunRow: View {
     private var modeColor: Color {
         guard let mode = entry.buildMode else { return .gray }
         switch mode {
-        case .full: return .blue
-        case .incremental: return .green
-        case .cached: return .teal
+        case .cold: return .blue
+        case .incrementalChanged: return .orange
+        case .incrementalUnchanged: return .green
+        case .cleanFallback: return .red
+        case .legacyFull: return .blue
+        case .legacyIncremental: return .green
         }
     }
 
