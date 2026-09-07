@@ -48,7 +48,7 @@ struct GitSourceSynchronizer: Sendable {
             return failure("无法读取 Git 远端配置，已停止构建，避免使用无法确认版本的源码。")
         }
         let remotes = remotesResult.stdout
-            .split(whereSeparator: \ .isNewline)
+            .split(whereSeparator: \.isNewline)
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         guard !remotes.isEmpty else {
