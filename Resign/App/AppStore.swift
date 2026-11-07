@@ -32,6 +32,7 @@ final class AppStore {
     @ObservationIgnored private var activeBuildTask: Task<Void, Never>?
     @ObservationIgnored private var deviceRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var scheduleSyncTask: Task<Void, Never>?
+    @ObservationIgnored private var configurationLoaded = false
 
     init(configDirectory: URL = AppPaths.configDirectory) {
         let logDirectory = configDirectory.appendingPathComponent("logs", isDirectory: true)
@@ -75,12 +76,14 @@ final class AppStore {
         let loaded = configStore.load()
         if let error = loaded.error {
             statusMessage = error
+            return
         }
         let state = loaded.state
         projects = state.projects
         settings = state.settings.normalized()
         logs = state.logs
         executionStates = state.executionStates
+        configurationLoaded = true
 
         // Adopt worker-written results into UI fields (covers runs that
         // happened while the app was closed).
@@ -95,7 +98,6 @@ final class AppStore {
 
         // One-time import of legacy bash-engine run logs (pre-1.5).
         importScheduledRuns(saveAfterImport: false)
-        logRepository.deleteOrphans(referencedLogFileNames: Set(logs.compactMap(\.logFile)))
     }
 
     private func currentState() -> PersistedState {
@@ -110,7 +112,18 @@ final class AppStore {
     /// Schedules an off-main save. ConfigStore merges concurrent worker
     /// results back in, so GUI edits never clobber background outcomes.
     func save() {
-        configStore.enqueueSave(currentState())
+        guard configurationLoaded else {
+            statusMessage = "配置未成功载入，已停止保存；请修复配置后重新启动 Resign"
+            showToast(.error, statusMessage)
+            return
+        }
+        configStore.enqueueSave(currentState()) { [weak self] error in
+            guard let error else { return }
+            Task { @MainActor [weak self] in
+                self?.statusMessage = error
+                self?.showToast(.error, error)
+            }
+        }
     }
 
     // MARK: - Projects
@@ -399,7 +412,7 @@ final class AppStore {
         ) { raw, date in
             logRepository.externalize(raw, date: date)
         }
-        logRepository.trim(&state.logs)
+        state.logs = Array(state.logs.prefix(LogRepository.maxEntries))
 
         projects = state.projects
         logs = state.logs
@@ -410,12 +423,20 @@ final class AppStore {
 
     // MARK: - Logs
 
-    /// Clears log entries plus every managed artifact on disk.
+    /// Persist the clear before changing the UI or deleting referenced files.
     func clearLogs() {
-        logs.removeAll()
-        logRepository.clearAll()
-        save()
-        showToast(.info, "日志已清空")
+        guard configurationLoaded else {
+            showToast(.error, "配置未成功载入，无法清空日志；请修复配置后重新启动 Resign")
+            return
+        }
+        do {
+            try configStore.clearLogsSynchronously(including: logs)
+            logs.removeAll()
+            showToast(.info, "日志已清空")
+        } catch {
+            statusMessage = "清空日志失败：\(error.localizedDescription)"
+            showToast(.error, statusMessage)
+        }
     }
 
     func fullLogText(for entry: BuildLogEntry) -> String {
@@ -430,7 +451,7 @@ final class AppStore {
 
         logs.append(contentsOf: imported)
         logs.sort { $0.date > $1.date }
-        logRepository.trim(&logs)
+        logs = Array(logs.prefix(LogRepository.maxEntries))
         if saveAfterImport { save() }
     }
 

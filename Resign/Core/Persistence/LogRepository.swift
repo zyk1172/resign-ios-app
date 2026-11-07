@@ -1,8 +1,7 @@
 import Foundation
 
-/// Owns the log directory: externalizing large outputs, loading full logs,
-/// trimming entries together with their disk artifacts, clearing the log
-/// directory and importing legacy scheduled-run status files.
+/// Externalizes large outputs, reads full logs, removes artifacts retired by
+/// a committed config transaction, and imports legacy scheduled-run files.
 ///
 /// Deletion safety: every removal targets a plain, non-hidden file name that
 /// matches a known prefix/suffix pattern inside the managed log directory.
@@ -33,6 +32,7 @@ struct LogRepository: Sendable {
         let name = "build_\(Self.timestampFormatter.string(from: date))_\(UUID().uuidString.prefix(8)).log"
         let url = directory.appendingPathComponent(name)
         do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try raw.write(to: url, atomically: true, encoding: .utf8)
         } catch {
             return (nil, raw)
@@ -58,61 +58,27 @@ struct LogRepository: Sendable {
         return try? String(contentsOf: directory.appendingPathComponent(name), encoding: .utf8)
     }
 
-    // MARK: - Trim & Clear
+    // MARK: - Post-commit cleanup
 
-    /// Caps the log list at `maxEntries`, deleting the disk artifacts of the
-    /// dropped entries (externalized build logs and legacy scheduled-run
-    /// status/log file pairs) so nothing grows unboundedly.
-    func trim(_ logs: inout [BuildLogEntry]) {
-        guard logs.count > Self.maxEntries else { return }
-        let dropped = logs.dropFirst(Self.maxEntries)
-        for entry in dropped {
-            deleteArtifacts(for: entry)
-        }
-        logs = Array(logs.prefix(Self.maxEntries))
-    }
-
-    /// Deletes every managed log artifact in the log directory. The schedule
-    /// state subdirectory and anything outside the known patterns are kept.
-    func clearAll() {
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil,
-            options: []
-        ) else { return }
-        for url in files where Self.isClearableName(url.lastPathComponent) {
-            try? FileManager.default.removeItem(at: url)
+    /// Called after config.json commits. Retained entries can share a legacy
+    /// artifact, and files produced by an in-flight run must stay untouched.
+    func deleteArtifacts(for entries: [BuildLogEntry], retaining kept: [BuildLogEntry]) {
+        let retained = Set(kept.flatMap(Self.artifactNames))
+        for name in Set(entries.flatMap(Self.artifactNames)).subtracting(retained) {
+            deleteFile(named: name)
         }
     }
 
-    /// Removes externalized build_*.log files that no surviving entry
-    /// references (e.g. entries trimmed by an older version).
-    func deleteOrphans(referencedLogFileNames: Set<String>) {
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil,
-            options: []
-        ) else { return }
-        for url in files {
-            let name = url.lastPathComponent
-            guard name.hasPrefix("build_"), name.hasSuffix(".log"),
-                  !referencedLogFileNames.contains(name) else { continue }
-            try? FileManager.default.removeItem(at: url)
-        }
-    }
-
-    private func deleteArtifacts(for entry: BuildLogEntry) {
-        if let logFile = entry.logFile {
-            deleteFile(named: logFile)
-        }
-        if let sourceIdentifier = entry.sourceIdentifier {
-            // Legacy scheduled runs: "run_<timestamp>.status" + "resign_<timestamp>.log"
-            deleteFile(named: sourceIdentifier)
-            let stem = (sourceIdentifier as NSString).deletingPathExtension
+    private static func artifactNames(for entry: BuildLogEntry) -> [String] {
+        var names = entry.logFile.map { [$0] } ?? []
+        if let source = entry.sourceIdentifier {
+            names.append(source)
+            let stem = (source as NSString).deletingPathExtension
             if stem.hasPrefix("run_") {
-                deleteFile(named: "resign_\(stem.dropFirst("run_".count)).log")
+                names.append("resign_\(stem.dropFirst("run_".count)).log")
             }
         }
+        return names.filter(Self.isClearableName)
     }
 
     private func deleteFile(named name: String) {

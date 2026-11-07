@@ -13,14 +13,20 @@ import Foundation
 struct ConfigStore: Sendable {
     enum ConfigStoreError: LocalizedError {
         case lockUnavailable
+        case readFailed(underlying: String)
         case writeFailed(underlying: String)
+        case unsupportedSchema(Int)
 
         var errorDescription: String? {
             switch self {
             case .lockUnavailable:
                 return "config.lock 被长期占用，无法完成配置写入"
+            case .readFailed(let underlying):
+                return "配置读取失败：\(underlying)；已保留原文件，停止写入"
             case .writeFailed(let underlying):
                 return "配置写入失败：\(underlying)"
+            case .unsupportedSchema(let version):
+                return "配置版本 \(version) 高于当前支持的版本；已保留原文件，请使用较新版本的 Resign"
             }
         }
     }
@@ -42,29 +48,16 @@ struct ConfigStore: Sendable {
 
     // MARK: - Read
 
-    /// Loads the state, running the one-time v1 → v2 migration when needed.
-    /// Never throws: a missing or unreadable config yields defaults plus an
-    /// error string for the caller to surface (the scheduled worker treats a
-    /// decode failure as a hard exit, not an empty run).
+    /// Reads and migrates under the same lock as writers. Only a missing file
+    /// is a fresh install; an unreadable or unsupported file must never become
+    /// the empty state used by a subsequent save.
     func load() -> (state: PersistedState, error: String?) {
         ioQueue.sync {
-            let (state, decodeError) = readState()
-            guard state.schemaVersion < PersistedState.currentSchemaVersion else {
-                return (state, decodeError)
-            }
-
-            let migrated = Self.migrate(from: state, directory: directory, logRepository: logRepository)
-            var error = decodeError
             do {
-                try performUnderConfigLock { _ in try writeState(migrated) }
+                return (try performUnderConfigLock { $0 }, nil)
             } catch {
-                // 迁移结果只在本次内存中生效；不删除旧 epoch 文件，
-                // 下次启动会基于未写入的旧文件重试迁移（幂等）。
-                let messages = [decodeError, "迁移写入失败：\(error.localizedDescription)"].compactMap { $0 }
-                return (migrated, messages.joined(separator: "\n"))
+                return (PersistedState(), error.localizedDescription)
             }
-            Self.removeLegacyEpochFiles(directory: directory)
-            return (migrated, error)
         }
     }
 
@@ -72,14 +65,15 @@ struct ConfigStore: Sendable {
 
     /// Fire-and-forget save for the GUI: merges the in-memory snapshot with
     /// whatever landed on disk meanwhile (e.g. worker results) and writes.
-    /// Write failures are reported to stderr — they are never silently
-    /// treated as success.
-    func enqueueSave(_ state: PersistedState) {
-        ioQueue.async { [directory] in
+    /// Completion runs on the I/O queue, allowing the GUI to surface failures.
+    func enqueueSave(_ state: PersistedState, completion: @escaping @Sendable (String?) -> Void = { _ in }) {
+        ioQueue.async {
             do {
-                try ConfigStore(directory: directory).saveSynchronously(state)
+                try saveUnderConfigLock(state)
+                completion(nil)
             } catch {
                 FileHandle.standardError.write(Data("Resign: \(error.localizedDescription)\n".utf8))
+                completion(error.localizedDescription)
             }
         }
     }
@@ -87,9 +81,27 @@ struct ConfigStore: Sendable {
     /// Synchronous save with merge; used by tests and callers that must wait.
     func saveSynchronously(_ state: PersistedState) throws {
         try ioQueue.sync {
+            try saveUnderConfigLock(state)
+        }
+    }
+
+    private func saveUnderConfigLock(_ state: PersistedState) throws {
+        try performUnderConfigLock { diskState in
+            try commit(Self.merge(local: state, disk: diskState), replacing: diskState)
+        }
+    }
+
+    /// A clear is an explicit transaction, not an empty snapshot to union with
+    /// disk. Waiting on ioQueue also drains earlier GUI saves before clearing.
+    /// Only committed/reported artifacts are removed; a concurrent writer may
+    /// already have created a new log file that it has not saved yet.
+    func clearLogsSynchronously(including localLogs: [BuildLogEntry] = []) throws {
+        try ioQueue.sync {
             try performUnderConfigLock { diskState in
-                let merged = Self.merge(local: state, disk: diskState)
-                try writeState(merged)
+                var cleared = diskState
+                cleared.logs.removeAll()
+                try commit(cleared, replacing: diskState)
+                logRepository.deleteArtifacts(for: localLogs, retaining: [])
             }
         }
     }
@@ -102,40 +114,62 @@ struct ConfigStore: Sendable {
     func updateSynchronously(_ mutate: (inout PersistedState) -> Void) throws {
         try ioQueue.sync {
             try performUnderConfigLock { diskState in
-                var state = diskState ?? PersistedState()
+                var state = diskState
                 mutate(&state)
-                try writeState(state)
+                try commit(state, replacing: diskState)
             }
         }
     }
 
-    /// Runs `body` with the freshly-read disk state while holding the config
-    /// lock; body performs the write before returning.
-    private func performUnderConfigLock(_ body: (PersistedState?) throws -> Void) throws {
+    /// The read, any migration, and the caller's write share one transaction.
+    private func performUnderConfigLock<T>(_ body: (PersistedState) throws -> T) throws -> T {
         let lock = FileLock(path: lockPath)
         guard lock.acquireWithRetry(attempts: 50, delayMilliseconds: 100) else {
             throw ConfigStoreError.lockUnavailable
         }
         defer { lock.release() }
-        let (diskState, _) = readState()
-        try body(diskState)
+        var diskState = try readState()
+        if diskState.schemaVersion < PersistedState.currentSchemaVersion {
+            let migrated = Self.migrate(from: diskState, directory: directory, logRepository: logRepository)
+            try writeState(migrated)
+            Self.removeLegacyEpochFiles(directory: directory)
+            diskState = migrated
+        }
+        return try body(diskState)
     }
 
     // MARK: - Encoding
 
-    private func readState() -> (PersistedState, String?) {
-        guard FileManager.default.fileExists(atPath: configURL.path) else {
-            return (PersistedState(), nil)
-        }
+    private func readState() throws -> PersistedState {
+        let data: Data
         do {
-            let data = try Data(contentsOf: configURL)
+            data = try Data(contentsOf: configURL)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return PersistedState()
+        } catch {
+            throw ConfigStoreError.readFailed(underlying: error.localizedDescription)
+        }
+        let state: PersistedState
+        do {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            let state = try decoder.decode(PersistedState.self, from: data)
-            return (state, nil)
+            state = try decoder.decode(PersistedState.self, from: data)
         } catch {
-            return (PersistedState(), "配置读取失败：\(error.localizedDescription)")
+            throw ConfigStoreError.readFailed(underlying: error.localizedDescription)
         }
+        guard state.schemaVersion <= PersistedState.currentSchemaVersion else {
+            throw ConfigStoreError.unsupportedSchema(state.schemaVersion)
+        }
+        return state
+    }
+
+    /// Cleanup follows the atomic config write, so a failed write cannot leave
+    /// the still-authoritative log entries pointing to files we just deleted.
+    private func commit(_ state: PersistedState, replacing previous: PersistedState) throws {
+        var saved = state
+        saved.logs = Array(state.logs.sorted { $0.date > $1.date }.prefix(LogRepository.maxEntries))
+        try writeState(saved)
+        logRepository.deleteArtifacts(for: previous.logs + state.logs, retaining: saved.logs)
     }
 
     private func writeState(_ state: PersistedState) throws {
@@ -164,7 +198,7 @@ struct ConfigStore: Sendable {
         var logsByID: [UUID: BuildLogEntry] = [:]
         for entry in local.logs { logsByID[entry.id] = entry }
         for entry in disk.logs where logsByID[entry.id] == nil { logsByID[entry.id] = entry }
-        merged.logs = Array(logsByID.values.sorted { $0.date > $1.date }.prefix(LogRepository.maxEntries))
+        merged.logs = logsByID.values.sorted { $0.date > $1.date }
 
         var states = local.executionStates
         for diskState in disk.executionStates {

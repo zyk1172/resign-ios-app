@@ -187,6 +187,214 @@ final class ConfigStoreTests: XCTestCase {
 
     // MARK: - Read-modify-write
 
+    func testGUISavePreservesCorruptedConfig() throws {
+        let original = Data("{ interrupted config".utf8)
+        try original.write(to: configURL)
+        let store = ConfigStore(directory: directory)
+
+        XCTAssertNotNil(store.load().error)
+        XCTAssertThrowsError(try store.saveSynchronously(PersistedState()))
+        XCTAssertEqual(try Data(contentsOf: configURL), original)
+    }
+
+    func testWorkerUpdateRejectsCorruptedConfigBeforeMutation() throws {
+        let original = Data("{ interrupted config".utf8)
+        try original.write(to: configURL)
+        var didMutate = false
+
+        XCTAssertThrowsError(try ConfigStore(directory: directory).updateSynchronously { _ in
+            didMutate = true
+        })
+        XCTAssertFalse(didMutate)
+        XCTAssertEqual(try Data(contentsOf: configURL), original)
+    }
+
+    func testFutureSchemaIsRejectedWithoutRewritingUnknownFields() throws {
+        let original = Data("{\"schemaVersion\":999,\"futureSetting\":\"keep\"}".utf8)
+        try original.write(to: configURL)
+        let store = ConfigStore(directory: directory)
+
+        XCTAssertNotNil(store.load().error)
+        XCTAssertThrowsError(try store.saveSynchronously(PersistedState()))
+        XCTAssertThrowsError(try store.updateSynchronously { _ in })
+        XCTAssertEqual(try Data(contentsOf: configURL), original)
+    }
+
+    func testMigrationReadsLatestStateAfterWaitingForConfigLock() async throws {
+        try writeConfig("{\"projects\":[{\"name\":\"Legacy\"}]}")
+        let lock = FileLock(path: directory.appendingPathComponent("config.lock").path)
+        XCTAssertTrue(lock.acquire())
+        defer { lock.release() }
+
+        let store = ConfigStore(directory: directory)
+        let started = DispatchSemaphore(value: 0)
+        let loadTask = Task.detached {
+            started.signal()
+            return store.load()
+        }
+        XCTAssertEqual(started.wait(timeout: .now() + 2), .success)
+        // Keep the lock long enough for the reader to reach the transaction.
+        // A pre-lock migration would now have captured the stale v1 snapshot.
+        try await Task.sleep(for: .milliseconds(200))
+        try writeConfig("{\"schemaVersion\":2,\"projects\":[{\"name\":\"Updated while waiting\"}]}")
+        lock.release()
+
+        let loaded = await loadTask.value
+        XCTAssertNil(loaded.error)
+        XCTAssertEqual(loaded.state.projects.first?.name, "Updated while waiting")
+        XCTAssertEqual(store.load().state.projects.first?.name, "Updated while waiting")
+    }
+
+    func testClearLogsDrainsPendingSaveAndDoesNotResurrectOnNextSave() throws {
+        let store = ConfigStore(directory: directory)
+        let project = iOSProject(name: "A", projectPath: "/tmp/A.xcodeproj")
+        let entry = BuildLogEntry(date: Date(), projectName: "A", status: .success, output: "old", durationSeconds: 1)
+        var guiState = PersistedState(
+            projects: [project],
+            executionStates: [ProjectExecutionState(projectID: project.id)],
+            logs: [entry]
+        )
+        store.enqueueSave(guiState)
+
+        try store.clearLogsSynchronously(including: guiState.logs)
+        XCTAssertTrue(store.load().state.logs.isEmpty)
+        guiState.logs.removeAll()
+        try store.saveSynchronously(guiState)
+
+        let loaded = store.load()
+        XCTAssertTrue(loaded.state.logs.isEmpty)
+        XCTAssertEqual(loaded.state.projects.first?.id, project.id)
+        XCTAssertEqual(loaded.state.executionStates.first?.projectID, project.id)
+
+        // Worker updates after the clear remain visible and survive GUI saves.
+        try store.updateSynchronously { $0.logs.append(entry) }
+        try store.saveSynchronously(guiState)
+        XCTAssertEqual(store.load().state.logs.map(\.id), [entry.id])
+    }
+
+    func testClearOnlyDeletesCommittedLogArtifacts() throws {
+        let repository = LogRepository(directory: directory.appendingPathComponent("logs"))
+        let raw = String(repeating: "x", count: LogRepository.inlineThreshold + 1)
+        let (oldFile, stored) = repository.externalize(raw, date: Date())
+        let entry = BuildLogEntry(date: Date(), projectName: "A", status: .success, output: stored, durationSeconds: 1, logFile: oldFile)
+        let store = ConfigStore(directory: directory, logRepository: repository)
+        try store.saveSynchronously(PersistedState(logs: [entry]))
+
+        // Another process has produced output but has not committed its entry.
+        let (pendingFile, _) = repository.externalize(raw, date: Date())
+        try store.clearLogsSynchronously()
+
+        XCTAssertTrue(store.load().state.logs.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: repository.directory.appendingPathComponent(try XCTUnwrap(oldFile)).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: repository.directory.appendingPathComponent(try XCTUnwrap(pendingFile)).path))
+    }
+
+    func testFailedClearPreservesConfigAndLogFiles() throws {
+        let repository = LogRepository(directory: directory.appendingPathComponent("logs"))
+        let (file, _) = repository.externalize(String(repeating: "x", count: LogRepository.inlineThreshold + 1), date: Date())
+        let entry = BuildLogEntry(date: Date(), projectName: "A", status: .success, output: "old", durationSeconds: 1, logFile: file)
+        let original = Data("{ damaged".utf8)
+        try original.write(to: configURL)
+        let store = ConfigStore(directory: directory, logRepository: repository)
+
+        XCTAssertThrowsError(try store.clearLogsSynchronously(including: [entry]))
+        XCTAssertEqual(try Data(contentsOf: configURL), original)
+        XCTAssertEqual(repository.fullLogText(for: entry)?.count, LogRepository.inlineThreshold + 1)
+    }
+
+    func testRetentionDeletesArtifactsOnlyAfterSuccessfulCommit() throws {
+        let repository = LogRepository(directory: directory.appendingPathComponent("logs"))
+        let (file, stored) = repository.externalize(String(repeating: "x", count: LogRepository.inlineThreshold + 1), date: .distantPast)
+        let oldEntry = BuildLogEntry(date: .distantPast, projectName: "A", status: .success, output: stored, durationSeconds: 1, logFile: file)
+        let store = ConfigStore(directory: directory, logRepository: repository)
+        try store.saveSynchronously(PersistedState(logs: [oldEntry]))
+
+        let newEntries = (0..<LogRepository.maxEntries).map { index in
+            BuildLogEntry(date: Date(timeIntervalSince1970: Double(index)), projectName: "A", status: .success, output: "new", durationSeconds: 1)
+        }
+        let invalid = BuildLogEntry(date: Date(), projectName: "A", status: .failed, output: "invalid", durationSeconds: .infinity)
+        XCTAssertThrowsError(try store.updateSynchronously { $0.logs = [invalid] + newEntries + [oldEntry] })
+        XCTAssertNotNil(repository.fullLogText(for: oldEntry))
+        XCTAssertEqual(store.load().state.logs.map(\.id), [oldEntry.id])
+
+        try store.updateSynchronously { $0.logs = newEntries + [oldEntry] }
+        XCTAssertEqual(store.load().state.logs.count, LogRepository.maxEntries)
+        XCTAssertNil(repository.fullLogText(for: oldEntry))
+    }
+
+    func testEnqueuedSaveReportsReadFailure() async throws {
+        try writeConfig("{ damaged")
+        let finished = expectation(description: "save error returned")
+        ConfigStore(directory: directory).enqueueSave(PersistedState()) { error in
+            XCTAssertTrue(error?.contains("配置读取失败") == true)
+            finished.fulfill()
+        }
+        await fulfillment(of: [finished], timeout: 2)
+    }
+
+    @MainActor
+    func testAppStoreDoesNotOverwriteRepairedConfigAfterFailedInitialLoad() throws {
+        let repository = LogRepository(directory: directory.appendingPathComponent("logs"))
+        let (file, _) = repository.externalize(String(repeating: "x", count: LogRepository.inlineThreshold + 1), date: Date())
+        try writeConfig("{ damaged")
+        let app = AppStore(configDirectory: directory)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: repository.directory.appendingPathComponent(try XCTUnwrap(file)).path))
+
+        // A repaired file must not be replaced by the GUI's empty fallback.
+        let disk = ConfigStore(directory: directory)
+        try writeConfig("{\"schemaVersion\":2,\"projects\":[{\"name\":\"Recovered\"}]}")
+        app.projects = [iOSProject(name: "Unsaved", projectPath: "/tmp/Unsaved.xcodeproj")]
+        app.save()
+
+        XCTAssertTrue(app.statusMessage.contains("配置未成功载入"))
+        XCTAssertEqual(disk.load().state.projects.first?.name, "Recovered")
+    }
+
+    @MainActor
+    func testAppStoreDisplaysAsynchronousSaveFailure() async throws {
+        try ConfigStore(directory: directory).saveSynchronously(PersistedState())
+        let app = AppStore(configDirectory: directory)
+        try writeConfig("{ damaged")
+        app.statusMessage = "就绪"
+        app.save()
+
+        for _ in 0..<100 where app.toast == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(app.statusMessage.contains("配置读取失败"))
+        XCTAssertEqual(app.toast?.kind, .error)
+    }
+
+    @MainActor
+    func testAppStoreClearPersistsBeforeReportingSuccess() throws {
+        let entry = BuildLogEntry(date: Date(), projectName: "A", status: .success, output: "old", durationSeconds: 1)
+        let disk = ConfigStore(directory: directory)
+        try disk.saveSynchronously(PersistedState(logs: [entry]))
+        let app = AppStore(configDirectory: directory)
+
+        app.clearLogs()
+
+        XCTAssertTrue(app.logs.isEmpty)
+        XCTAssertTrue(disk.load().state.logs.isEmpty)
+        XCTAssertEqual(app.toast?.message, "日志已清空")
+    }
+
+    @MainActor
+    func testAppStoreFailedClearKeepsVisibleEntriesAndFiles() throws {
+        let repository = LogRepository(directory: directory.appendingPathComponent("logs"))
+        let (file, stored) = repository.externalize(String(repeating: "x", count: LogRepository.inlineThreshold + 1), date: Date())
+        let entry = BuildLogEntry(date: Date(), projectName: "A", status: .success, output: stored, durationSeconds: 1, logFile: file)
+        try ConfigStore(directory: directory).saveSynchronously(PersistedState(logs: [entry]))
+        let app = AppStore(configDirectory: directory)
+        try writeConfig("{ damaged")
+
+        app.clearLogs()
+
+        XCTAssertEqual(app.logs.map(\.id), [entry.id])
+        XCTAssertEqual(app.toast?.kind, .error)
+        XCTAssertNotNil(repository.fullLogText(for: entry))
+    }
+
     func testUpdatePersistsAndIsVisibleToNextRead() throws {
         let store = ConfigStore(directory: directory)
         let projectID = UUID()
