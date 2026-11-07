@@ -106,7 +106,7 @@ struct GitSourceSynchronizer: Sendable {
         let localResult = await git(root, ["rev-parse", "HEAD"])
         let remoteResult = await git(root, ["rev-parse", targetRef])
         guard localResult.exitCode == 0, remoteResult.exitCode == 0 else {
-            return failure("远端分支 \(targetRef) 不存在或提交无法解析，已停止构建。")
+            return failure("远端分支 \(targetRef) 不存在或提交无法解析，已停止构建。该功能分支可能已被删除；请先在源码仓库选择要构建的现有分支（例如 main）并同步，Resign 不会自动切换分支。")
         }
 
         let localSHA = localResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -189,28 +189,10 @@ struct GitSourceSynchronizer: Sendable {
     }
 }
 
-private actor GitSourceSyncCache {
-    private var values: [String: GitSourceSyncResult] = [:]
-
-    func value(for repositoryRoot: String) -> GitSourceSyncResult? {
-        values[repositoryRoot]
-    }
-
-    func store(_ value: GitSourceSyncResult, for repositoryRoot: String) {
-        values[repositoryRoot] = value
-    }
-}
-
 /// Runs `xcodebuild` (single invocations only; retry decisions belong to
-/// RetryPolicy / BuildCoordinator).
+/// RetryPolicy / BuildCoordinator, including the once-per-run source preflight).
 struct BuildExecutor: Sendable {
     let runner: ProcessRunning
-    private let sourceSyncCache: GitSourceSyncCache
-
-    init(runner: ProcessRunning) {
-        self.runner = runner
-        self.sourceSyncCache = GitSourceSyncCache()
-    }
 
     /// Common xcodebuild arguments for one project. Team is injected through
     /// DEVELOPMENT_TEAM so automatic signing uses the user-selected team.
@@ -232,12 +214,7 @@ struct BuildExecutor: Sendable {
     }
 
     func showBuildSettings(arguments: [String], xcodePath: String) async -> ProcessResult {
-        let sourceSync = await ensureLatestSource(arguments: arguments)
-        guard sourceSync.success else {
-            return ProcessResult(exitCode: 1, stdout: "", stderr: sourceSync.log)
-        }
-
-        return await runner.run(
+        await runner.run(
             XcodeToolchain.xcodebuildPath(xcodePath: xcodePath),
             arguments: arguments + ["-showBuildSettings", "-json"],
             environment: XcodeToolchain.environment(xcodePath: xcodePath)
@@ -245,51 +222,10 @@ struct BuildExecutor: Sendable {
     }
 
     func build(arguments: [String], xcodePath: String) async -> ProcessResult {
-        let sourceSync = await ensureLatestSource(arguments: arguments)
-        guard sourceSync.success else {
-            return ProcessResult(exitCode: 1, stdout: "", stderr: sourceSync.log)
-        }
-
-        let result = await runner.run(
+        await runner.run(
             XcodeToolchain.xcodebuildPath(xcodePath: xcodePath),
             arguments: arguments + ["build"],
             environment: XcodeToolchain.environment(xcodePath: xcodePath)
         )
-
-        guard !sourceSync.log.isEmpty else { return result }
-        let prefix = "=== SOURCE SYNC ===\n\(sourceSync.log)\n"
-        return ProcessResult(
-            exitCode: result.exitCode,
-            stdout: prefix + result.stdout,
-            stderr: result.stderr
-        )
-    }
-
-    private func ensureLatestSource(arguments: [String]) async -> GitSourceSyncResult {
-        guard let projectPath = Self.projectPath(from: arguments),
-              let repositoryRoot = GitSourceSynchronizer.repositoryRoot(for: projectPath)
-        else {
-            return .skipped
-        }
-
-        let cacheKey = repositoryRoot.standardizedFileURL.path
-        if let cached = await sourceSyncCache.value(for: cacheKey) {
-            return cached
-        }
-
-        let result = await GitSourceSynchronizer(runner: runner)
-            .synchronize(repositoryRoot: repositoryRoot)
-        await sourceSyncCache.store(result, for: cacheKey)
-        return result
-    }
-
-    private static func projectPath(from arguments: [String]) -> String? {
-        for flag in ["-project", "-workspace"] {
-            guard let index = arguments.firstIndex(of: flag) else { continue }
-            let next = arguments.index(after: index)
-            guard next < arguments.endIndex else { continue }
-            return arguments[next]
-        }
-        return nil
     }
 }

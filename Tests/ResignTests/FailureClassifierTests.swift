@@ -75,6 +75,20 @@ final class FailureClassifierTests: XCTestCase {
         XCTAssertTrue(summary?.reason.contains("没有登录 Xcode") == true)
     }
 
+    func testNoAccountsTakesPriorityOverMissingProfiles() {
+        let output = "error: No Accounts: Add a new account in Accounts settings.\nerror: No profiles for 'com.example' were found"
+        XCTAssertEqual(FailureClassifier.classify(output), .fatal)
+        XCTAssertTrue(FailureClassifier.diagnose(output)?.reason.contains("登录") == true)
+    }
+
+    func testSourceFailureHasActionableSourceSummary() {
+        let output = "=== SOURCE SYNC ===\n源码版本检查失败：远端分支 origin/retired 不存在；请先在源码仓库选择 main 并同步。\n"
+        let summary = FailureClassifier.diagnose(output)
+        XCTAssertEqual(summary?.location, "源码")
+        XCTAssertTrue(summary?.reason.contains("origin/retired") == true)
+        XCTAssertTrue(summary?.reason.contains("main") == true)
+    }
+
     func testCompilerErrorSummaryHasFileAndLine() {
         let summary = FailureClassifier.diagnose(
             "/Users/dev/Proj/ContentView.swift:42:7: error: cannot find 'foo' in scope"

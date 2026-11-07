@@ -80,6 +80,23 @@ final class GitSourceSynchronizerTests: XCTestCase {
         )
     }
 
+    func testMissingRemoteBranchExplainsRecoveryAndPreservesLocalBranch() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        _ = try git(fixture.local, ["checkout", "-b", "retired-feature"])
+        let originalHead = try git(fixture.local, ["rev-parse", "HEAD"]).trimmed
+
+        let result = await GitSourceSynchronizer(runner: FoundationProcessRunner())
+            .synchronize(projectPath: fixture.projectPath.path)
+
+        XCTAssertFalse(result.success)
+        XCTAssertTrue(result.log.contains("origin/retired-feature"), result.log)
+        XCTAssertTrue(result.log.contains("main"), result.log)
+        XCTAssertTrue(result.log.contains("不会自动切换分支"), result.log)
+        XCTAssertEqual(try git(fixture.local, ["branch", "--show-current"]).trimmed, "retired-feature")
+        XCTAssertEqual(try git(fixture.local, ["rev-parse", "HEAD"]).trimmed, originalHead)
+    }
+
     private func makeFixture() throws -> Fixture {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("git-sync-\(UUID().uuidString)", isDirectory: true)
