@@ -30,6 +30,7 @@ enum FailureClassifier {
         "failed registering bundle identifier",
         "cannot be registered to your development team",
         "no account for team",
+        "no accounts: add a new account",
         "no profiles for",
         "developer mode is disabled",
         "developer mode has not been enabled",
@@ -61,6 +62,13 @@ enum FailureClassifier {
     static func diagnose(_ output: String) -> BuildErrorSummary? {
         let text = output.lowercased()
         let lines = output.components(separatedBy: .newlines)
+
+        if let failure = lines.first(where: { $0.contains("源码版本检查失败：") }) {
+            return BuildErrorSummary(
+                location: "源码",
+                reason: failure.replacingOccurrences(of: "源码版本检查失败：", with: "")
+            )
+        }
 
         // 0. Known deterministic failures -> actionable Chinese diagnosis.
         //    These are the errors users actually hit with free developer
@@ -165,7 +173,7 @@ enum FailureClassifier {
         }
 
         // Team's Apple ID is not signed into Xcode.
-        if text.contains("no account for team") {
+        if text.contains("no account for team") || text.contains("no accounts: add a new account") {
             return BuildErrorSummary(
                 location: "签名",
                 reason: "当前 Team 对应的 Apple ID 没有登录 Xcode。请到 Xcode → Settings → Accounts 登录该账号后重试。"

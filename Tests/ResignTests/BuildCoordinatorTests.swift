@@ -7,6 +7,7 @@ import XCTest
 /// semantics for GUI and scheduled execution.
 ///
 /// 每个 execute 的外部调用顺序（供 mock 队列排布）：
+///   0. Git 源码预检（有 Git 仓库时；通过后才准备缓存/Profile）
 ///   1. xcodebuild -version（缓存决策）
 ///   2. xcodebuild -showBuildSettings
 ///   3. xcodebuild build（可重试/回退）
@@ -125,6 +126,78 @@ final class BuildCoordinatorTests: XCTestCase {
     }
 
     // MARK: - Happy path
+
+    func testSourceFailurePreservesExistingProductsAndProfilesWithoutBuilding() async throws {
+        try FileManager.default.createDirectory(at: projectRoot.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        try Data("PRODUCT_BUNDLE_IDENTIFIER = com.example.demo;".utf8)
+            .write(to: URL(fileURLWithPath: projectPath).appendingPathComponent("project.pbxproj"))
+        let project = makeProject()
+        let workspaceRoot = stateRoot.appendingPathComponent("derived")
+        let products = BuildCoordinator.productsDirectory(
+            workspace: workspaceRoot.appendingPathComponent(project.id.uuidString),
+            configuration: project.configuration, platform: project.platform
+        )
+        let existingApp = products.appendingPathComponent("Demo.app")
+        try FileManager.default.createDirectory(at: existingApp, withIntermediateDirectories: true)
+        let marker = existingApp.appendingPathComponent("preserve.txt")
+        try Data("existing app".utf8).write(to: marker)
+        let profiles = stateRoot.appendingPathComponent("profiles")
+        try FileManager.default.createDirectory(at: profiles, withIntermediateDirectories: true)
+        let profileURL = profiles.appendingPathComponent("existing.mobileprovision")
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <plist version="1.0"><dict><key>Entitlements</key><dict>
+        <key>application-identifier</key><string>ABCDE12345.com.example.demo</string>
+        </dict></dict></plist>
+        """
+        try Data(xml.utf8).write(to: profileURL)
+
+        let runner = MockProcessRunner()
+        for output in ["origin\n", "main\n", "origin/main\n", "", "abc123\n"] {
+            runner.enqueue(makeProcessResult(exitCode: 0, stdout: output))
+        }
+        runner.enqueue(makeProcessResult(exitCode: 128, stderr: "missing remote ref"))
+        var coordinator = makeCoordinator(runner: runner, derivedDataRoot: workspaceRoot)
+        coordinator.provisioningProfilesDirectories = [profiles]
+
+        let result = await coordinator.execute(makeRequest(project: project))
+
+        XCTAssertFalse(result.success)
+        XCTAssertTrue(result.output.contains("源码版本检查失败"))
+        XCTAssertTrue(result.output.contains("main"))
+        XCTAssertTrue(runner.recordedCalls.allSatisfy { $0.executable == "/usr/bin/git" })
+        XCTAssertEqual(try String(contentsOf: marker), "existing app")
+        XCTAssertEqual(try String(contentsOf: profileURL), xml)
+    }
+
+    func testSourceUpdatePrecedesFingerprintAndRunsOnce() async throws {
+        try FileManager.default.createDirectory(at: projectRoot.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        let sourceURL = projectRoot.appendingPathComponent("Source.swift")
+        try Data("let version = 1\n".utf8).write(to: sourceURL)
+        let project = makeProject()
+        createApp("Demo.app")
+        let oldFingerprint = try ProjectFingerprintService.fingerprint(of: project)
+        let runner = MockProcessRunner()
+        for output in ["origin\n", "main\n", "origin/main\n"] {
+            runner.enqueue(makeProcessResult(exitCode: 0, stdout: output))
+        }
+        runner.enqueue(makeProcessResult(exitCode: 0)) { _ in
+            try! Data("let version = 2\n".utf8).write(to: sourceURL)
+        }
+        runner.enqueue(makeProcessResult(exitCode: 0, stdout: "abc123\n"))
+        runner.enqueue(makeProcessResult(exitCode: 0, stdout: "abc123\n"))
+        runner.enqueueVersion()
+        runner.enqueue(buildSettingsJSON(targets: [("Demo", "Demo.app")]))
+
+        let result = await makeCoordinator(runner: runner).execute(makeRequest(project: project))
+
+        XCTAssertTrue(result.success, result.output)
+        let metadata = try XCTUnwrap(BuildCacheManager.loadMetadata(for: project.id, directory: cacheDirectory))
+        XCTAssertNotEqual(metadata.fingerprint, oldFingerprint)
+        XCTAssertEqual(metadata.fingerprint, try ProjectFingerprintService.fingerprint(of: project))
+        XCTAssertEqual(runner.calls(to: "git").filter { $0.arguments.contains("fetch") }.count, 1)
+        XCTAssertEqual(result.output.components(separatedBy: "=== SOURCE SYNC ===").count - 1, 1)
+    }
 
     func testHappyPathResolvesNamedProductAndInstallsAllDevices() async throws {
         let runner = MockProcessRunner()

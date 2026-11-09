@@ -50,6 +50,9 @@ printf '\n==> test-without-building ...\n'
     -scheme Resign \
     -configuration Debug \
     -destination 'platform=macOS' \
+    -test-timeouts-enabled YES \
+    -default-test-execution-time-allowance 60 \
+    -maximum-test-execution-time-allowance 120 \
     test-without-building
 
 printf '\n测试通过 ✅\n'

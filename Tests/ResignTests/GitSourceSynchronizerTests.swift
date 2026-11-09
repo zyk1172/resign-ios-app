@@ -29,6 +29,22 @@ final class GitSourceSynchronizerTests: XCTestCase {
         )
     }
 
+    func testRepositoryRootStopsAtFilesystemRoot() {
+        // Keep the platform behavior visible when diagnosing older runners.
+        print("Foundation parent of /: \(URL(fileURLWithPath: "/", isDirectory: true).deletingLastPathComponent().path)")
+        XCTAssertNil(GitSourceSynchronizer.repositoryRoot(for: "/ResignNoRepository-\(UUID().uuidString).xcodeproj"))
+    }
+
+    func testRepositoryRootReturnsNilForTemporaryProjectOutsideGit() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("git-absent-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = root.appendingPathComponent("Apps/Demo.xcodeproj", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+
+        XCTAssertNil(GitSourceSynchronizer.repositoryRoot(for: project.path))
+    }
+
     func testSynchronizeFastForwardsCleanBehindRepository() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -78,6 +94,23 @@ final class GitSourceSynchronizerTests: XCTestCase {
             try String(contentsOf: fixture.local.appendingPathComponent("Source.swift"), encoding: .utf8),
             "let version = 999 // local edit\n"
         )
+    }
+
+    func testMissingRemoteBranchExplainsRecoveryAndPreservesLocalBranch() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        _ = try git(fixture.local, ["checkout", "-b", "retired-feature"])
+        let originalHead = try git(fixture.local, ["rev-parse", "HEAD"]).trimmed
+
+        let result = await GitSourceSynchronizer(runner: FoundationProcessRunner())
+            .synchronize(projectPath: fixture.projectPath.path)
+
+        XCTAssertFalse(result.success)
+        XCTAssertTrue(result.log.contains("origin/retired-feature"), result.log)
+        XCTAssertTrue(result.log.contains("main"), result.log)
+        XCTAssertTrue(result.log.contains("不会自动切换分支"), result.log)
+        XCTAssertEqual(try git(fixture.local, ["branch", "--show-current"]).trimmed, "retired-feature")
+        XCTAssertEqual(try git(fixture.local, ["rev-parse", "HEAD"]).trimmed, originalHead)
     }
 
     private func makeFixture() throws -> Fixture {

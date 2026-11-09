@@ -38,8 +38,6 @@ struct ScheduledRunCoordinator: Sendable {
         let state = loaded.state
         let settings = state.settings.normalized()
 
-        logRepository.deleteOrphans(referencedLogFileNames: Set(state.logs.compactMap(\.logFile)))
-
         let enabled = state.projects.filter { $0.isEnabled && !$0.projectPath.isEmpty }
         guard !enabled.isEmpty else {
             print("[ResignWorker] 没有已启用的项目，结束")
@@ -114,7 +112,6 @@ struct ScheduledRunCoordinator: Sendable {
                     ) { raw, date in
                         logRepository.externalize(raw, date: date)
                     }
-                    logRepository.trim(&currentState.logs)
                 }
             } catch {
                 persistenceFailed = true

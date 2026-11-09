@@ -48,9 +48,25 @@ final class LogRepositoryTests: XCTestCase {
         XCTAssertNil(repository.fullLogText(for: unsafe), "路径穿越必须被拒绝")
     }
 
-    // MARK: - Trim
+    func testArtifactDeletionPreservesSharedAndUnmanagedFiles() throws {
+        let shared = BuildLogEntry(date: Date(), projectName: "A", status: .success, output: "shared", durationSeconds: 1, logFile: "build_shared.log")
+        let dropped = BuildLogEntry(date: Date(), projectName: "A", status: .success, output: "drop", durationSeconds: 1, logFile: "build_dropped.log")
+        let unrelated = BuildLogEntry(date: Date(), projectName: "A", status: .success, output: "unrelated", durationSeconds: 1, logFile: "unrelated.txt")
+        for name in ["build_shared.log", "build_dropped.log", "unrelated.txt", "build_pending.log"] {
+            try Data("keep".utf8).write(to: directory.appendingPathComponent(name))
+        }
 
-    func testTrimDeletesArtifactsOfDroppedEntries() throws {
+        repository.deleteArtifacts(for: [shared, dropped, unrelated], retaining: [shared])
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("build_shared.log").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("build_dropped.log").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("unrelated.txt").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("build_pending.log").path))
+    }
+
+    // MARK: - Post-commit cleanup
+
+    func testDeletesArtifactsOfDroppedEntries() throws {
         // Logs are stored newest-first; trim keeps the newest 200 and drops
         // the oldest suffix together with their disk artifacts.
         var logs: [BuildLogEntry] = []
@@ -66,7 +82,9 @@ final class LogRepositoryTests: XCTestCase {
                 logFile: fileName
             ))
         }
-        repository.trim(&logs)
+        let kept = Array(logs.prefix(LogRepository.maxEntries))
+        repository.deleteArtifacts(for: logs, retaining: kept)
+        logs = kept
 
         XCTAssertEqual(logs.count, LogRepository.maxEntries)
         XCTAssertEqual(logs.first?.logFile, "build_0.log", "最新的条目保留")
@@ -77,7 +95,7 @@ final class LogRepositoryTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("build_199.log").path))
     }
 
-    func testTrimDeletesLegacyScheduledRunPairs() throws {
+    func testDeletesLegacyScheduledRunPairs() throws {
         // Newest 200 plain entries first, legacy pair last (oldest → dropped).
         var logs: [BuildLogEntry] = (0..<LogRepository.maxEntries).map { index in
             BuildLogEntry(
@@ -99,34 +117,13 @@ final class LogRepositoryTests: XCTestCase {
         try Data("failed".utf8).write(to: directory.appendingPathComponent("run_20260101_030000.status"))
         try Data("log".utf8).write(to: directory.appendingPathComponent("resign_20260101_030000.log"))
 
-        repository.trim(&logs)
+        let kept = Array(logs.prefix(LogRepository.maxEntries))
+        repository.deleteArtifacts(for: logs, retaining: kept)
+        logs = kept
 
         XCTAssertEqual(logs.count, LogRepository.maxEntries)
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("run_20260101_030000.status").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("resign_20260101_030000.log").path))
-    }
-
-    // MARK: - Clear
-
-    func testClearAllRemovesOnlyManagedArtifacts() throws {
-        let managed: Set<String> = [
-            "build_1.log", "resign_20260101_030000.log", "run_20260101_030000.status",
-            "stdout.log", "stderr.log", "launchd_stdout.log"
-        ]
-        for name in managed {
-            try Data("x".utf8).write(to: directory.appendingPathComponent(name))
-        }
-        try Data("keep".utf8).write(to: directory.appendingPathComponent("unrelated.txt"))
-        try FileManager.default.createDirectory(at: directory.appendingPathComponent("state"), withIntermediateDirectories: true)
-        try Data("1".utf8).write(to: directory.appendingPathComponent("state/1.epoch"))
-
-        repository.clearAll()
-
-        for name in managed {
-            XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path), "\(name) 应被删除")
-        }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("unrelated.txt").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("state/1.epoch").path), "调度状态目录不应被清空")
     }
 
     // MARK: - Legacy scheduled-run import

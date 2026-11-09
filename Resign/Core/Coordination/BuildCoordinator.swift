@@ -121,6 +121,17 @@ struct BuildCoordinator: Sendable {
             installPlan = .devices(deviceUDIDs)
         }
 
+        // Source checks must finish before fingerprints or destructive cache /
+        // profile preparation. A missing upstream must not remove a valid app
+        // or provisioning profile, and the cache must describe the fetched code.
+        let sourceSync = await GitSourceSynchronizer(runner: runner)
+            .synchronize(projectPath: project.projectPath)
+        var fullOutput = sourceSync.log.isEmpty ? "" : "=== SOURCE SYNC ===\n\(sourceSync.log)\n"
+        if Task.isCancelled { return .cancelledResult(output: fullOutput + "\n任务已取消") }
+        guard sourceSync.success else {
+            return BuildResult(success: false, output: fullOutput)
+        }
+
         // ── 缓存决策（GUI 与 Worker 共用同一逻辑）──
         var fingerprint: String?
         do {
@@ -153,7 +164,7 @@ struct BuildCoordinator: Sendable {
         } else {
             decision = .incrementalChangedBuild(reason: "项目指纹计算失败，按增量构建处理（保留工作区）")
         }
-        var fullOutput = "=== CACHE ===\n\(decision.logDescription)\n"
+        fullOutput += "=== CACHE ===\n\(decision.logDescription)\n"
 
         do {
             try Self.prepareWorkspace(workspace, root: derivedDataRoot, clear: decision.clearsWorkspace)

@@ -27,6 +27,7 @@ Resign **不适用于**：
 - 扫描并管理多个 Xcode 项目；
 - 为每个项目单独选择开发者的 Team（自动签名，`DEVELOPMENT_TEAM`）；
 - 自动读取共享 Scheme；
+- 构建前同步当前 Git 分支的远端最新提交，仅对干净工作区做快进更新；源码检查失败时保留现有产物和签名 Profile，不自动切换分支；
 - 检测已配对的实体 iOS/iPadOS 设备；
 - 使用独立 DerivedData 目录重新构建每个项目；
 - 从 Xcode 构建设置中准确定位主 App，避免安装旧产物或扩展；
@@ -138,6 +139,10 @@ LaunchAgent 配置保存在：
 
 日志可能包含本地项目路径、编译器输出和设备标识，因此不应直接上传到公开 Issue。仓库的忽略规则会排除配置、日志、Provisioning Profile 和常见签名文件。
 
+配置无法读取、损坏或使用了较新版本的格式时，Resign 会显示错误并保留原文件，拒绝用空配置覆盖。请修复配置或使用支持该格式的版本，再重新启动 Resign。保存失败也会在界面中显示。
+
+“清空日志”会先提交配置中的删除操作，成功后再移除对应的日志文件；失败时保留原条目和文件。日志最多保留 200 条，超出部分同样在配置提交后清理。正在执行的任务尚未提交的日志文件会保留，待任务完成后正常记录。
+
 ## 常见错误与诊断
 
 免费开发者账号（Personal Team）有一些限制，Resign 会在日志页直接给出中文提示，常见情况如下：
@@ -148,7 +153,9 @@ LaunchAgent 配置保存在：
 | `MIFreeProfileValidatedAppTracker` / `maximum number of apps for free development profiles` | 免费 Personal Team 每台设备最多装 3 个开发 App（带扩展的项目还会额外消耗 App ID / provisioning 资源） | 卸载该设备上一个免费签名 App，或改用付费开发者账号 |
 | `Failed Registering Bundle Identifier ... not available` | 该 Bundle ID 已被另一个开发者账号注册 | 把项目 Team 改回注册过该 Bundle ID 的账号，或修改 Bundle ID |
 | `No Account for Team "XXXX"` | 所选 Team 的 Apple ID 没有登录 Xcode | 到 Xcode → Settings → Accounts 登录该账号 |
+| `No Accounts: Add a new account` | Xcode 没有可用的开发者账号 | 到所选 Xcode → Settings → Accounts 登录后重试 |
 | `No profiles for ... were found` | 该 Team 下没有匹配的 Provisioning Profile | 在 Xcode 中打开项目让其自动生成 |
+| `远端分支 origin/... 不存在或提交无法解析` | 当前源码分支没有可用的远端分支，功能分支可能已被删除 | 保留需要的本地提交，在源码仓库选择现有分支并同步后重试 |
 
 免费账号（不付费）的硬性限制：每台设备最多 3 个免费签名 App、每个账号最多注册 3 台测试设备、Profile 7 天过期。**多注册几个 Apple ID 并不能叠加每台设备的 3 个名额**——该限制按设备计算。需要不限数量的安装时，应使用付费的 Apple Developer Program 账号。
 
@@ -157,7 +164,7 @@ LaunchAgent 配置保存在：
 - 交互式命令使用 `Foundation.Process` 参数数组，不通过 Shell 拼接；
 - 后台任务不再生成 Bash 脚本，构建/签名/安装/产物解析/重试逻辑只存在于 Swift 执行核心（`BuildCoordinator`），LaunchAgent 仅负责触发 Worker；
 - 手动执行与后台任务共用跨进程构建锁（`resign.lock`），无法并发进入构建区域；配置读写使用独立的跨进程锁（`config.lock`）做原子合并；
-- DerivedData 删除操作限制在 `/tmp/ResignBuild/<项目 UUID>`；
+- 当前构建缓存的删除操作限制在 `~/Library/Application Support/Resign/DerivedData/<项目 UUID>`；旧版临时缓存路径为 `/tmp/ResignBuild`；
 - 安装前读取 `TARGET_BUILD_DIR` 和 `WRAPPER_NAME`，无法唯一确认主 App 时停止；
 - LaunchAgent 安装会检查 `launchctl` 的真实结果，不以 plist 是否存在代替运行状态；
 - 编译/签名类确定性错误不会长时间盲目重试；无法识别的错误同样不自动重试。
