@@ -22,19 +22,24 @@ struct GitSourceSynchronizer: Sendable {
     /// Finds the nearest enclosing Git repository for an .xcodeproj/.xcworkspace.
     /// Supports both normal `.git` directories and worktree/submodule `.git` files.
     static func repositoryRoot(for projectPath: String) -> URL? {
-        var directory = URL(fileURLWithPath: projectPath)
-            .standardizedFileURL
-            .deletingLastPathComponent()
+        var directoryPath = (URL(fileURLWithPath: projectPath)
+            .standardizedFileURL.path as NSString).deletingLastPathComponent
         let fileManager = FileManager.default
 
-        while true {
+        while !directoryPath.isEmpty {
+            let directory = URL(fileURLWithPath: directoryPath, isDirectory: true)
             if fileManager.fileExists(atPath: directory.appendingPathComponent(".git").path) {
                 return directory
             }
-            let parent = directory.deletingLastPathComponent()
-            guard parent.path != directory.path else { return nil }
-            directory = parent
+            // Foundation URL has returned /../ for the parent of / on older
+            // systems. Walk filesystem path strings and require strict progress
+            // so a project outside Git cannot loop forever at the volume root.
+            guard directoryPath != "/" else { return nil }
+            let parentPath = (directoryPath as NSString).deletingLastPathComponent
+            guard parentPath.count < directoryPath.count else { return nil }
+            directoryPath = parentPath
         }
+        return nil
     }
 
     func synchronize(projectPath: String) async -> GitSourceSyncResult {

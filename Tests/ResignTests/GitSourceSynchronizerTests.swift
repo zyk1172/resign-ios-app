@@ -29,6 +29,22 @@ final class GitSourceSynchronizerTests: XCTestCase {
         )
     }
 
+    func testRepositoryRootStopsAtFilesystemRoot() {
+        // Keep the platform behavior visible when diagnosing older runners.
+        print("Foundation parent of /: \(URL(fileURLWithPath: "/", isDirectory: true).deletingLastPathComponent().path)")
+        XCTAssertNil(GitSourceSynchronizer.repositoryRoot(for: "/ResignNoRepository-\(UUID().uuidString).xcodeproj"))
+    }
+
+    func testRepositoryRootReturnsNilForTemporaryProjectOutsideGit() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("git-absent-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let project = root.appendingPathComponent("Apps/Demo.xcodeproj", isDirectory: true)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+
+        XCTAssertNil(GitSourceSynchronizer.repositoryRoot(for: project.path))
+    }
+
     func testSynchronizeFastForwardsCleanBehindRepository() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
