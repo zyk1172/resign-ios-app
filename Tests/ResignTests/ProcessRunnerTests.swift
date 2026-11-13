@@ -23,10 +23,12 @@ final class ProcessRunnerTests: XCTestCase {
 
     func testTimeoutKillsIgnoringDescendantsAndPreservesUnrelatedProcess() async throws {
         let unrelated = Process()
+        let unrelatedExited = expectation(description: "unrelated process exited")
+        unrelated.terminationHandler = { _ in unrelatedExited.fulfill() }
         unrelated.executableURL = URL(fileURLWithPath: "/bin/sleep")
         unrelated.arguments = ["15"]
         try unrelated.run()
-        defer { if unrelated.isRunning { unrelated.terminate() }; unrelated.waitUntilExit() }
+        defer { if unrelated.isRunning { _ = kill(unrelated.processIdentifier, SIGKILL) } }
         let pidFile = directory.appendingPathComponent("child.pid")
         let start = Date()
         let result = await FoundationProcessRunner().run(
@@ -39,6 +41,11 @@ final class ProcessRunnerTests: XCTestCase {
         let pid = try childPID(pidFile)
         await assertExited(pid)
         XCTAssertTrue(unrelated.isRunning)
+        unrelated.terminate()
+        // An async test may resume on a different thread after await. Do not
+        // call waitUntilExit there: its launch-thread run loop can hang even
+        // after the child has exited. The termination callback is bounded.
+        await fulfillment(of: [unrelatedExited], timeout: 3)
     }
 
     func testCancellationKillsChildEvenWhenItsOutputIsRedirected() async throws {

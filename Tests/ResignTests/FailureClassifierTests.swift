@@ -98,6 +98,9 @@ final class FailureClassifierTests: XCTestCase {
         if case .stop = RetryPolicy(maxAttempts: 3, intervalSeconds: 1800).decision(afterAttempt: 1, failureClass: .requiresUserAction) {} else {
             XCTFail("设备需要用户操作时不能等待重试")
         }
+        let mixed = "No profiles for 'com.example.demo' were found\nCoreDevice error 4016"
+        XCTAssertEqual(FailureClassifier.classify(mixed), .fatal)
+        XCTAssertEqual(FailureClassifier.diagnose(mixed)?.location, "签名")
     }
 
     func testCompilerErrorSummaryHasFileAndLine() {
@@ -105,5 +108,13 @@ final class FailureClassifierTests: XCTestCase {
             "/Users/dev/Proj/ContentView.swift:42:7: error: cannot find 'foo' in scope"
         )
         XCTAssertEqual(summary?.location, "ContentView.swift:42")
+    }
+
+    func testNoAutomaticTargetHasDeviceSummaryBeforeAndAfterBuild() {
+        for output in ["错误：未找到可用的目标设备", "自动选择未找到当前可用设备；产物已生成，未安装。"] {
+            let summary = FailureClassifier.diagnose(output)
+            XCTAssertEqual(summary?.location, "设备")
+            XCTAssertTrue(summary?.reason.contains("解锁") == true)
+        }
     }
 }

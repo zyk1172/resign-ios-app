@@ -73,18 +73,14 @@ enum FailureClassifier {
             )
         }
 
+        // Keep deterministic signing/account failures ahead of secondary
+        // device or timeout messages, matching the retry classification.
+        if let known = knownFailureSummary(text) { return known }
         if let reason = deviceActionReason(output) {
             return BuildErrorSummary(location: "设备", reason: reason)
         }
         if text.contains("process timed out after") {
             return BuildErrorSummary(location: "执行超时", reason: "外部命令超过设定时限，已终止本次命令及其进程组；请检查设备连接和阶段日志。")
-        }
-
-        // 0. Known deterministic failures -> actionable Chinese diagnosis.
-        //    These are the errors users actually hit with free developer
-        //    accounts; a generic "签名 / 安装" label is not enough.
-        if let known = knownFailureSummary(text) {
-            return known
         }
 
         // 1. First meaningful "error:" line (xcodebuild / clang / swiftc)
@@ -128,8 +124,9 @@ enum FailureClassifier {
         }
 
         // 3. Last resort
-        if output.contains("未找到已连接设备") {
-            return BuildErrorSummary(location: "设备", reason: "未找到已连接设备，请检查 iPhone 是否已连接并信任此电脑")
+        if output.contains("未找到已连接设备") || output.contains("未找到可用的目标设备")
+            || output.contains("自动选择未找到当前可用设备") {
+            return BuildErrorSummary(location: "设备", reason: "未找到当前可用的目标设备，请连接、解锁设备并确认已信任此电脑后重试")
         }
         if output.contains("未找到 .app 产物") {
             return BuildErrorSummary(location: "构建", reason: "未找到 .app 产物，请检查 Scheme 与 Configuration 配置")
