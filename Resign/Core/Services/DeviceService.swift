@@ -2,7 +2,11 @@ import Foundation
 
 /// Discovers paired physical iOS/iPadOS devices via `devicectl` JSON output.
 /// The human-readable table must never be parsed — it is not a stable interface.
-struct DeviceService: Sendable {
+protocol DeviceDiscovering: Sendable {
+    func listDevices(xcodePath: String) async -> [iOSDevice]
+}
+
+struct DeviceService: DeviceDiscovering {
     let runner: ProcessRunning
 
     func listDevices(xcodePath: String) async -> [iOSDevice] {
@@ -14,7 +18,8 @@ struct DeviceService: Sendable {
         let result = await runner.run(
             XcodeToolchain.xcrunPath,
             arguments: ["devicectl", "list", "devices", "--json-output", jsonURL.path],
-            environment: XcodeToolchain.environment(xcodePath: xcodePath)
+            environment: XcodeToolchain.environment(xcodePath: xcodePath),
+            timeout: ProcessTimeouts.discovery
         )
 
         guard result.exitCode == 0,
@@ -43,6 +48,8 @@ struct DeviceService: Sendable {
             let connection = dictionary["connectionProperties"] as? [String: Any]
             let transport = connection?["transportType"] as? String ?? ""
             let pairing = connection?["pairingState"] as? String ?? ""
+            let tunnel = connection?["tunnelState"] as? String
+            let disconnected = tunnel == "unavailable" || tunnel == "disconnected"
 
             let connectionType: String
             switch transport {
@@ -56,7 +63,7 @@ struct DeviceService: Sendable {
                 name: name,
                 osVersion: osVersion,
                 connectionType: connectionType,
-                isAvailable: pairing == "paired" && bootState == "booted" && !transport.isEmpty
+                isAvailable: pairing == "paired" && bootState == "booted" && !transport.isEmpty && !disconnected
             )
         }
         .sorted {
@@ -70,7 +77,10 @@ struct DeviceService: Sendable {
 enum DeviceSelection {
     /// Explicit project selection wins; otherwise the first available device.
     static func resolveDeviceUDIDs(projectUDIDs: [String], availableDevices: [iOSDevice]) -> [String] {
-        if !projectUDIDs.isEmpty { return projectUDIDs }
+        if !projectUDIDs.isEmpty {
+            var seen = Set<String>()
+            return projectUDIDs.filter { seen.insert($0).inserted }
+        }
         return availableDevices.first(where: \.isAvailable).map { [$0.udid] } ?? []
     }
 }

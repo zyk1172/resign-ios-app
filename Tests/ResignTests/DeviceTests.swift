@@ -29,6 +29,13 @@ final class DeviceTests: XCTestCase {
         XCTAssertTrue(DeviceSelection.resolveDeviceUDIDs(projectUDIDs: [], availableDevices: devices).isEmpty)
     }
 
+    func testUnavailableTunnelIsNotAvailableDespiteCachedBootAndPairingState() {
+        let json = Data("""
+        {"result":{"devices":[{"hardwareProperties":{"udid":"A","reality":"physical"},"deviceProperties":{"name":"Phone","bootState":"booted"},"connectionProperties":{"transportType":"localNetwork","pairingState":"paired","tunnelState":"unavailable"}}]}}
+        """.utf8)
+        XCTAssertEqual(DeviceService.parseDevices(json: json).first?.isAvailable, false)
+    }
+
     // MARK: - devicectl JSON parsing
 
     func testParseDevicesFiltersToPhysicalAndSortsAvailableFirst() throws {

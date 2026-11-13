@@ -33,6 +33,7 @@ final class AppStore {
     @ObservationIgnored private var deviceRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var scheduleSyncTask: Task<Void, Never>?
     @ObservationIgnored private var configurationLoaded = false
+    @ObservationIgnored private var activeProgressID: UUID?
 
     init(configDirectory: URL = AppPaths.configDirectory) {
         let logDirectory = configDirectory.appendingPathComponent("logs", isDirectory: true)
@@ -297,12 +298,13 @@ final class AppStore {
         await refreshDevices()
         var succeeded = 0
         var failed = 0
+        var partial = 0
 
         for (index, project) in enabled.enumerated() {
             if Task.isCancelled { break }
             let result = await performBuild(of: project, source: .manual)
             if result.cancelled { break }
-            if result.success { succeeded += 1 } else { failed += 1 }
+            if result.success { succeeded += 1 } else if result.isPartialSuccess { partial += 1 } else { failed += 1 }
 
             if index < enabled.count - 1 && settings.buildCooldownSeconds > 0 {
                 statusMessage = "等待 \(settings.buildCooldownSeconds) 秒后执行下一个项目…"
@@ -320,11 +322,11 @@ final class AppStore {
             return
         }
 
-        statusMessage = failed == 0 ? "全部完成" : "完成：\(succeeded) 成功，\(failed) 失败"
+        statusMessage = failed == 0 && partial == 0 ? "全部完成" : "完成：\(succeeded) 成功，\(partial) 部分成功，\(failed) 失败"
         if settings.notifyOnComplete {
             NotificationService.send(
-                title: failed == 0 ? "Resign 完成" : "Resign 部分失败",
-                body: "成功 \(succeeded) 个，失败 \(failed) 个"
+                title: failed == 0 && partial == 0 ? "Resign 完成" : "Resign 部分完成",
+                body: "成功 \(succeeded) 个，部分成功 \(partial) 个，失败 \(failed) 个"
             )
         }
     }
@@ -344,6 +346,8 @@ final class AppStore {
         let result = await performBuild(of: project, source: .manual, deviceOverride: deviceOverride)
         if result.cancelled {
             statusMessage = "任务已取消"
+        } else if result.isPartialSuccess {
+            statusMessage = "\(project.name) \(result.completionSummary)"
         } else if let udid = deviceOverride?.first,
                   let deviceName = devices.first(where: { $0.udid == udid })?.name {
             statusMessage = result.success ? "\(project.name) 已推送到 \(deviceName)" : "\(project.name) 推送到 \(deviceName) 失败"
@@ -377,24 +381,20 @@ final class AppStore {
             statusMessage = "正在构建：\(project.name)"
         }
 
-        let result: BuildResult
-        if let udid = deviceOverride?.first,
-           !devices.contains(where: { $0.udid == udid && $0.isAvailable }) {
-            let deviceName = devices.first(where: { $0.udid == udid })?.name ?? String(udid.prefix(8))
-            result = BuildResult(
-                success: false,
-                output: "错误：目标设备「\(deviceName)」当前未连接。请连接并信任此电脑后在设备页刷新，然后再试。"
-            )
-        } else {
-            let request = BuildRequest(
-                project: project,
-                settings: settings,
-                availableDevices: devices,
-                source: source,
-                deviceOverride: deviceOverride
-            )
-            result = await buildCoordinator.execute(request)
+        let request = BuildRequest(
+            project: project, settings: settings,
+            source: source, deviceOverride: deviceOverride
+        )
+        let progressID = UUID()
+        activeProgressID = progressID
+        let result = await buildCoordinator.execute(request) { [weak self] message in
+            guard !Task.isCancelled else { return }
+            Task { @MainActor [weak self] in
+                guard self?.activeProgressID == progressID else { return }
+                self?.statusMessage = "\(project.name)：\(message)"
+            }
         }
+        activeProgressID = nil
         let duration = Date().timeIntervalSince(startedAt)
 
         var state = currentState()

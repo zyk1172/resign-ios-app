@@ -22,7 +22,7 @@ final class FailureClassifierTests: XCTestCase {
 
     func testTransientErrorsAreRetryable() {
         XCTAssertEqual(FailureClassifier.classify("The network connection was lost"), .retryable)
-        XCTAssertEqual(FailureClassifier.classify("Device is locked"), .retryable)
+        XCTAssertEqual(FailureClassifier.classify("Device is locked"), .requiresUserAction)
         XCTAssertEqual(FailureClassifier.classify("Timed out waiting for device"), .retryable)
     }
 
@@ -87,6 +87,17 @@ final class FailureClassifierTests: XCTestCase {
         XCTAssertEqual(summary?.location, "源码")
         XCTAssertTrue(summary?.reason.contains("origin/retired") == true)
         XCTAssertTrue(summary?.reason.contains("main") == true)
+    }
+
+    func testDeviceActionsStopAutomaticRetryAndHaveChineseGuidance() {
+        for output in ["device was still locked. error 10003", "has not been unlocked recently", "usage assertion requirements. error 4016", "device not paired"] {
+            XCTAssertEqual(FailureClassifier.classify(output), .requiresUserAction)
+            XCTAssertFalse(FailureClassifier.isTransientFailure(output))
+            XCTAssertEqual(FailureClassifier.diagnose(output)?.location, "设备")
+        }
+        if case .stop = RetryPolicy(maxAttempts: 3, intervalSeconds: 1800).decision(afterAttempt: 1, failureClass: .requiresUserAction) {} else {
+            XCTFail("设备需要用户操作时不能等待重试")
+        }
     }
 
     func testCompilerErrorSummaryHasFileAndLine() {

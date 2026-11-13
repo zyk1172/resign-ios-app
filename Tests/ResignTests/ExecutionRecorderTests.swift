@@ -107,6 +107,23 @@ final class ExecutionRecorderTests: XCTestCase {
         ])
     }
 
+    func testPartialSuccessIsVisibleButDoesNotAdvanceProjectSuccessDate() {
+        apply(BuildResult(success: true, output: "previous success"), startedAt: Date(timeIntervalSince1970: 100))
+        let oldDate = state.executionStates.first?.lastSuccessfulInstallDate
+        let result = BuildResult(success: false, output: "needs device", failedDeviceUDIDs: ["D2"], deviceOutcomes: [
+            DeviceInstallOutcome(udid: "D1", success: true, attempts: 1, output: ""),
+            DeviceInstallOutcome(udid: "D2", success: false, attempts: 0, output: "", deviceName: "Offline iPhone", failureReason: "请连接设备")
+        ])
+        apply(result, startedAt: Date(timeIntervalSince1970: 200))
+        XCTAssertEqual(state.executionStates.first?.lastSuccessfulInstallDate, oldDate)
+        XCTAssertEqual(state.executionStates.first?.lastStatus, .failed)
+        XCTAssertTrue(state.logs.first?.isPartialSuccess == true)
+        XCTAssertEqual(state.logs.first?.statusLabel, "部分成功（1/2 台）")
+        XCTAssertEqual(state.logs.first?.deviceInstallSummaries?.last?.deviceName, "Offline iPhone")
+        XCTAssertEqual(state.logs.first?.failedDevices, ["Offline iPhone"])
+        XCTAssertEqual(state.logs.first?.errorSummary?.reason, "请连接设备")
+    }
+
     func testUpsertDoesNotDuplicateExecutionState() {
         apply(BuildResult(success: true, output: "ok"))
         apply(BuildResult(success: true, output: "ok again"))

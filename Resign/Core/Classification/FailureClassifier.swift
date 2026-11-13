@@ -6,6 +6,8 @@ import Foundation
 enum FailureClass: Equatable, Sendable {
     /// Temporary (device offline, network hiccup) - retrying may help.
     case retryable
+    /// Requires connection, unlock or trust; waiting alone will not fix it.
+    case requiresUserAction
     /// Deterministic (profile missing device, quota full, bundle id taken) - retrying is pointless.
     case fatal
     /// Not recognized - conservative default that does NOT retry.
@@ -14,10 +16,9 @@ enum FailureClass: Equatable, Sendable {
 
 enum FailureClassifier {
     static let transientMarkers = [
-        "timed out", "timeout", "temporarily unavailable", "device is locked",
+        "timed out", "timeout", "temporarily unavailable",
         "device unavailable", "lost connection", "connection interrupted",
         "could not connect", "developer disk image", "network connection was lost",
-        "is not paired", "device not paired", "pairing"
     ]
 
     static let fatalMarkers = [
@@ -42,6 +43,7 @@ enum FailureClassifier {
     ]
 
     static func isTransientFailure(_ output: String) -> Bool {
+        guard deviceActionReason(output) == nil else { return false }
         let text = output.lowercased()
         return transientMarkers.contains { text.contains($0) }
     }
@@ -51,6 +53,7 @@ enum FailureClassifier {
         if fatalMarkers.contains(where: { text.contains($0) }) {
             return .fatal
         }
+        if deviceActionReason(output) != nil { return .requiresUserAction }
         if isTransientFailure(output) {
             return .retryable
         }
@@ -68,6 +71,13 @@ enum FailureClassifier {
                 location: "源码",
                 reason: failure.replacingOccurrences(of: "源码版本检查失败：", with: "")
             )
+        }
+
+        if let reason = deviceActionReason(output) {
+            return BuildErrorSummary(location: "设备", reason: reason)
+        }
+        if text.contains("process timed out after") {
+            return BuildErrorSummary(location: "执行超时", reason: "外部命令超过设定时限，已终止本次命令及其进程组；请检查设备连接和阶段日志。")
         }
 
         // 0. Known deterministic failures -> actionable Chinese diagnosis.
@@ -125,6 +135,21 @@ enum FailureClassifier {
             return BuildErrorSummary(location: "构建", reason: "未找到 .app 产物，请检查 Scheme 与 Configuration 配置")
         }
 
+        return nil
+    }
+
+    static func deviceActionReason(_ output: String) -> String? {
+        let text = output.lowercased()
+        if text.contains("device is locked") || text.contains("device was still locked")
+            || text.contains("has not been unlocked recently") || text.contains("error 10003") {
+            return "设备已锁定或长时间未解锁，请先解锁设备，再重新安装；不会长时间等待重试。"
+        }
+        if text.contains("error 4016") || text.contains("usage assertion requirements") {
+            return "设备连接或 CoreDevice 服务尚未就绪，请连接、解锁设备并确认 Xcode 中可用后重试。"
+        }
+        if text.contains("is not paired") || text.contains("device not paired") || text.contains("trust this computer") {
+            return "设备尚未配对或信任此电脑，请在设备上完成信任并确认 Xcode 中可用后重试。"
+        }
         return nil
     }
 

@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		00C752B3515B04209CB5C8A6 /* AppInstallerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A5C6EA7812C315A98F0E3C6 /* AppInstallerTests.swift */; };
+		049974C69880A2F8B5CF9AC6 /* ExecutionStage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15D18E97F408779FB87E6791 /* ExecutionStage.swift */; };
 		07CBBBD704A371CBF23F1EBA /* BuildCacheManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 939E0C993A7EC9D5927EA08C /* BuildCacheManagerTests.swift */; };
 		0D8C6622AFA16CE1CCCEBCC8 /* BuildCacheManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90C472961AD30FAB9ECF290F /* BuildCacheManager.swift */; };
 		0DB19650E769D3876DE52AD4 /* DevicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FFEAC13F2955F79492F78F2 /* DevicesView.swift */; };
@@ -26,6 +28,7 @@
 		406386D9F73FD25BE7D9957C /* AppInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 983204A164B98111D53A539A /* AppInstaller.swift */; };
 		435A4DDC65969C57777CE7EB /* ProductResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB5D93AB1AD6539512B1741 /* ProductResolver.swift */; };
 		45341BA74B93BB17D1A8F854 /* BuildCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF96F047B4C7A57CADDCB7B8 /* BuildCoordinatorTests.swift */; };
+		487DD0D3F163EFCB03CF041F /* ExecutionStage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15D18E97F408779FB87E6791 /* ExecutionStage.swift */; };
 		48A11C070A4491CD1ED25258 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11F5616D4D8227EFC72DDC93 /* ScheduleView.swift */; };
 		4B8718C651BDA72E94FE672F /* XcodeToolchain.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9CD916C19331C63C5F1CBFD /* XcodeToolchain.swift */; };
 		4B90D7EA9D5C70DF8D14364E /* DeviceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25D87A6FC29E49D8897BDEB5 /* DeviceService.swift */; };
@@ -45,6 +48,7 @@
 		6E2709DCB8B7326BE68969B2 /* ProjectFingerprintService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D088FC94855722B27BE332 /* ProjectFingerprintService.swift */; };
 		70591EFDF88998A6382AFB7D /* SchemeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17592B515DC11B40CED62781 /* SchemeService.swift */; };
 		723F6450C8A67AD216517956 /* FileLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69E3DB16685440484B03F2DA /* FileLock.swift */; };
+		751A5CD3343CB75D8EC71B95 /* ProcessRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E0EFD45FAB11449EF8BE639 /* ProcessRunnerTests.swift */; };
 		760B5AA3DF4AD7F28B6484AC /* AppInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 983204A164B98111D53A539A /* AppInstaller.swift */; };
 		76F3DF04B65D76B5264C2F5F /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BD83D87C6D58D7D8059BD75 /* LogsView.swift */; };
 		7CCA5E814DC5F66BD2A4DAB3 /* RetryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59837BD1E6E1411F0F124A67 /* RetryPolicy.swift */; };
@@ -131,7 +135,9 @@
 		047E0E9633145444CF9C3999 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		054D2DF571A2B84B4E858465 /* MacAppInstallerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAppInstallerTests.swift; sourceTree = "<group>"; };
 		05780FB4CFE6D856F819B328 /* DeviceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceTests.swift; sourceTree = "<group>"; };
+		0A5C6EA7812C315A98F0E3C6 /* AppInstallerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInstallerTests.swift; sourceTree = "<group>"; };
 		11F5616D4D8227EFC72DDC93 /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
+		15D18E97F408779FB87E6791 /* ExecutionStage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionStage.swift; sourceTree = "<group>"; };
 		17592B515DC11B40CED62781 /* SchemeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchemeService.swift; sourceTree = "<group>"; };
 		19D9F51803E3B70DF61EF673 /* ProjectsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsView.swift; sourceTree = "<group>"; };
 		21D42C1CFD42E3921F9E615B /* ScheduledRunCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledRunCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -141,6 +147,7 @@
 		3778373847E73D8FA00E9A1C /* FingerprintServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FingerprintServiceTests.swift; sourceTree = "<group>"; };
 		3A52753EB19A5993578BCCD3 /* FailureClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FailureClassifier.swift; sourceTree = "<group>"; };
 		3F6B6F780F9E7DE3211D24F2 /* ResignTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ResignTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4E0EFD45FAB11449EF8BE639 /* ProcessRunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessRunnerTests.swift; sourceTree = "<group>"; };
 		59837BD1E6E1411F0F124A67 /* RetryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetryPolicy.swift; sourceTree = "<group>"; };
 		604620391F02A6E72498E067 /* ConfigStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigStoreTests.swift; sourceTree = "<group>"; };
 		615413A73D50C4774EFC8DB4 /* MockProcessRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockProcessRunner.swift; sourceTree = "<group>"; };
@@ -252,6 +259,7 @@
 		4FDF1AAB55A12C1518A5C3F7 /* ResignTests */ = {
 			isa = PBXGroup;
 			children = (
+				0A5C6EA7812C315A98F0E3C6 /* AppInstallerTests.swift */,
 				939E0C993A7EC9D5927EA08C /* BuildCacheManagerTests.swift */,
 				CF96F047B4C7A57CADDCB7B8 /* BuildCoordinatorTests.swift */,
 				604620391F02A6E72498E067 /* ConfigStoreTests.swift */,
@@ -263,6 +271,7 @@
 				B70AEBB1D907CF24F333BCB8 /* GitSourceSynchronizerTests.swift */,
 				9FD34C7F39993912D9556199 /* LogRepositoryTests.swift */,
 				054D2DF571A2B84B4E858465 /* MacAppInstallerTests.swift */,
+				4E0EFD45FAB11449EF8BE639 /* ProcessRunnerTests.swift */,
 				A3D45D5D8C7318D9E1CA7160 /* ProductResolverTests.swift */,
 				A7968E65F21FA71482E39D74 /* ProvisioningProfileServiceTests.swift */,
 				009997F57129A77A926039C6 /* ResignTests.swift */,
@@ -381,6 +390,7 @@
 			children = (
 				FA3BE015F1992CAFFF383481 /* BuildCoordinator.swift */,
 				7AE2F7C00A76EF06FB3EBBB8 /* ExecutionRecorder.swift */,
+				15D18E97F408779FB87E6791 /* ExecutionStage.swift */,
 				B54F15E629D1568D38945622 /* ScheduledRunCoordinator.swift */,
 			);
 			path = Coordination;
@@ -513,6 +523,7 @@
 				0DB19650E769D3876DE52AD4 /* DevicesView.swift in Sources */,
 				2B889878CA60D375FBF785EB /* ExecutionDetailsView.swift in Sources */,
 				C8D52290F96A2ED48FAAE78B /* ExecutionRecorder.swift in Sources */,
+				049974C69880A2F8B5CF9AC6 /* ExecutionStage.swift in Sources */,
 				F38CEBF444D2C52218206DCE /* FailureClassifier.swift in Sources */,
 				723F6450C8A67AD216517956 /* FileLock.swift in Sources */,
 				E8E55A71211731D8DF2DB185 /* LogRepository.swift in Sources */,
@@ -542,6 +553,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				00C752B3515B04209CB5C8A6 /* AppInstallerTests.swift in Sources */,
 				07CBBBD704A371CBF23F1EBA /* BuildCacheManagerTests.swift in Sources */,
 				45341BA74B93BB17D1A8F854 /* BuildCoordinatorTests.swift in Sources */,
 				F6844E815C7C9AFF601DB205 /* ConfigStoreTests.swift in Sources */,
@@ -554,6 +566,7 @@
 				6233ACC646211F77410FE352 /* LogRepositoryTests.swift in Sources */,
 				9C0A5909B939708A3412C489 /* MacAppInstallerTests.swift in Sources */,
 				68AB14C0B2A65E90F703D055 /* MockProcessRunner.swift in Sources */,
+				751A5CD3343CB75D8EC71B95 /* ProcessRunnerTests.swift in Sources */,
 				60690F4AB6EB9AE5678C4A94 /* ProductResolverTests.swift in Sources */,
 				8FE02136033AB4CB3967EA7C /* ProvisioningProfileServiceTests.swift in Sources */,
 				D40AD62A21BDBE69312E1BCB /* ResignTests.swift in Sources */,
@@ -578,6 +591,7 @@
 				C57E6B09E907DD02449F7B96 /* DevelopmentTeamService.swift in Sources */,
 				4B90D7EA9D5C70DF8D14364E /* DeviceService.swift in Sources */,
 				B94F87AC45FEE0013897E056 /* ExecutionRecorder.swift in Sources */,
+				487DD0D3F163EFCB03CF041F /* ExecutionStage.swift in Sources */,
 				847411DCFD088EDE3835704C /* FailureClassifier.swift in Sources */,
 				F4AE6C439815D23059E828EB /* FileLock.swift in Sources */,
 				9FFFF1E7DF96B4C7732F4BD2 /* LogRepository.swift in Sources */,

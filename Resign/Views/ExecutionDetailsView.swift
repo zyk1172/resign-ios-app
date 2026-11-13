@@ -156,12 +156,15 @@ struct ScheduledRunRow: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Image(systemName: entry.status.symbolName)
+            Image(systemName: entry.isPartialSuccess ? "exclamationmark.circle.fill" : entry.status.symbolName)
                 .font(.system(size: 11))
                 .foregroundStyle(statusColor)
             Text(entry.projectName)
                 .font(.system(size: AppStyle.listTitleSize, weight: .semibold))
                 .lineLimit(1)
+            Text(entry.statusLabel)
+                .font(.system(size: 9))
+                .foregroundStyle(statusColor)
             if let mode = entry.buildMode {
                 Text(mode.label)
                     .font(.system(size: 8, weight: .semibold))
@@ -203,7 +206,7 @@ struct ScheduledRunRow: View {
     private var deviceOutcomes: some View {
         if let summaries = entry.deviceInstallSummaries, !summaries.isEmpty {
             ForEach(summaries, id: \.udid) { summary in
-                chip(name: summary.deviceName, success: summary.success, attempts: summary.attempts)
+                chip(name: summary.deviceName, success: summary.success, attempts: summary.attempts, reason: summary.failureReason)
             }
         } else if let failed = entry.failedDevices, !failed.isEmpty {
             ForEach(failed, id: \.self) { name in
@@ -220,6 +223,7 @@ struct ScheduledRunRow: View {
     }
 
     private var statusColor: Color {
+        if entry.isPartialSuccess { return .orange }
         switch entry.status {
         case .success: return .green
         case .failed: return .red
@@ -245,16 +249,20 @@ struct ScheduledRunRow: View {
         return URL(fileURLWithPath: appPath).lastPathComponent
     }
 
-    private func chip(name: String, success: Bool, attempts: Int?) -> some View {
+    private func chip(name: String, success: Bool, attempts: Int?, reason: String? = nil) -> some View {
         let color: Color = success ? .green : .red
         return HStack(spacing: 3) {
             Image(systemName: success ? "checkmark" : "xmark")
                 .font(.system(size: 8, weight: .bold))
                 .foregroundStyle(color)
             Text(name)
+                .help(reason ?? name)
                 .font(.system(size: 9))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+            if attempts == 0 {
+                Text("待处理").foregroundStyle(.orange)
+            }
             if let attempts = attempts, attempts > 1 {
                 Text("×\(attempts)")
                     .font(.system(size: 8, weight: .semibold))

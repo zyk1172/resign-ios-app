@@ -1,30 +1,26 @@
 import Foundation
 
-/// One fully-described execution: which project, with which settings, against
-/// which snapshot of available devices. `source` records who asked for it.
+/// One execution request. Device availability is discovered during execution,
+/// rather than supplied as a potentially stale GUI or worker snapshot.
 struct BuildRequest: Sendable {
     let project: iOSProject
     let settings: AppSettings
-    let availableDevices: [iOSDevice]
     let source: ExecutionSource
     /// Test hook: overrides the retry policy derived from settings so unit
     /// tests can use zero-interval retries.
     var retryPolicyOverride: RetryPolicy?
-    /// Test hook: overrides the retry policy derived from settings so unit
-    /// tests can use zero-interval retries.
+    /// An explicit target chosen by a one-off push from the GUI.
     var deviceOverride: [String]?
 
     init(
         project: iOSProject,
         settings: AppSettings,
-        availableDevices: [iOSDevice],
         source: ExecutionSource,
         retryPolicyOverride: RetryPolicy? = nil,
         deviceOverride: [String]? = nil
     ) {
         self.project = project
         self.settings = settings
-        self.availableDevices = availableDevices
         self.source = source
         self.retryPolicyOverride = retryPolicyOverride
         self.deviceOverride = deviceOverride
@@ -43,6 +39,16 @@ struct BuildResult: Sendable {
     var builtAppPath: String? = nil
     /// 构建方式（完整/增量），来自缓存决策。
     var buildMode: BuildMode? = nil
+
+    var isPartialSuccess: Bool {
+        !cancelled && deviceOutcomes.contains { $0.success } && deviceOutcomes.contains { !$0.success }
+    }
+
+    var completionSummary: String {
+        if cancelled { return "已取消" }
+        if isPartialSuccess { return "部分成功：\(deviceOutcomes.filter(\.success).count)/\(deviceOutcomes.count) 台设备安装成功" }
+        return success ? "已完成" : "执行失败"
+    }
 
     static func cancelledResult(output: String = "任务已取消") -> BuildResult {
         BuildResult(success: false, output: output, cancelled: true)
@@ -72,14 +78,18 @@ struct BuildCoordinator: Sendable {
     var buildCacheDirectory: URL = AppPaths.buildCacheDirectory
     /// 本机 provisioning profile 存储目录（injectable for tests；nil = 系统默认）。
     var provisioningProfilesDirectories: [URL]? = nil
+    var deviceDiscovery: DeviceDiscovering? = nil
 
     /// Where a finished run installs: paired devices (iOS) or this Mac (macOS).
     private enum InstallPlan: Sendable {
-        case devices([String])
+        case devices
         case localMac
     }
 
-    func execute(_ request: BuildRequest) async -> BuildResult {
+    func execute(
+        _ request: BuildRequest,
+        onProgress: @escaping @Sendable (String) -> Void = { _ in }
+    ) async -> BuildResult {
         let project = request.project
         if Task.isCancelled { return .cancelledResult() }
 
@@ -106,33 +116,48 @@ struct BuildCoordinator: Sendable {
             return BuildResult(success: false, output: "错误：项目路径不存在：\(project.projectPath)")
         }
 
+        let discovery = deviceDiscovery ?? DeviceService(runner: runner)
+        let requestedDevices = request.deviceOverride ?? project.deviceUDIDs
+        var fullOutput = ""
         let installPlan: InstallPlan
         switch project.platform {
         case .macos:
             installPlan = .localMac
         case .ios:
-            let deviceUDIDs = request.deviceOverride ?? DeviceSelection.resolveDeviceUDIDs(
-                projectUDIDs: project.deviceUDIDs,
-                availableDevices: request.availableDevices
-            )
-            guard !deviceUDIDs.isEmpty else {
-                return BuildResult(success: false, output: "错误：未找到可用的已连接设备")
+            let stage = ExecutionStage("设备预检", onProgress: onProgress)
+            fullOutput += stage.startedLog
+            let freshDevices = await discovery.listDevices(xcodePath: request.settings.xcodePath)
+            fullOutput += stage.finish()
+            if Task.isCancelled { return .cancelledResult(output: fullOutput) }
+            let targets = DeviceSelection.resolveDeviceUDIDs(projectUDIDs: requestedDevices, availableDevices: freshDevices)
+            guard targets.contains(where: { id in freshDevices.contains { $0.udid == id && $0.isAvailable } }) else {
+                let reason = "未找到可用的目标设备；请连接、解锁并信任此电脑后重试。"
+                let outcomes = targets.map { id in
+                    DeviceInstallOutcome(udid: id, success: false, attempts: 0, output: reason,
+                        deviceName: freshDevices.first { $0.udid == id }?.name, failureReason: reason)
+                }
+                return BuildResult(success: false, output: fullOutput + "\n错误：\(reason)",
+                                   failedDeviceUDIDs: targets, deviceOutcomes: outcomes)
             }
-            installPlan = .devices(deviceUDIDs)
+            installPlan = .devices
         }
 
         // Source checks must finish before fingerprints or destructive cache /
         // profile preparation. A missing upstream must not remove a valid app
         // or provisioning profile, and the cache must describe the fetched code.
+        let sourceStage = ExecutionStage("源码检查", onProgress: onProgress)
+        fullOutput += sourceStage.startedLog
         let sourceSync = await GitSourceSynchronizer(runner: runner)
             .synchronize(projectPath: project.projectPath)
-        var fullOutput = sourceSync.log.isEmpty ? "" : "=== SOURCE SYNC ===\n\(sourceSync.log)\n"
+        fullOutput += (sourceSync.log.isEmpty ? "" : "=== SOURCE SYNC ===\n\(sourceSync.log)\n") + sourceStage.finish()
         if Task.isCancelled { return .cancelledResult(output: fullOutput + "\n任务已取消") }
         guard sourceSync.success else {
             return BuildResult(success: false, output: fullOutput)
         }
 
         // ── 缓存决策（GUI 与 Worker 共用同一逻辑）──
+        let fingerprintStage = ExecutionStage("计算构建指纹", onProgress: onProgress)
+        fullOutput += fingerprintStage.startedLog
         var fingerprint: String?
         do {
             fingerprint = try await Task.detached(priority: .userInitiated) {
@@ -142,11 +167,19 @@ struct BuildCoordinator: Sendable {
             fingerprint = nil
         }
 
+        fullOutput += fingerprintStage.finish()
+        let versionStage = ExecutionStage("工具链检查", onProgress: onProgress)
+        fullOutput += versionStage.startedLog
         let versionResult = await runner.run(
             XcodeToolchain.xcodebuildPath(xcodePath: request.settings.xcodePath),
             arguments: ["-version"],
             environment: XcodeToolchain.environment(xcodePath: request.settings.xcodePath)
         )
+        fullOutput += versionStage.finish()
+        if Task.isCancelled { return .cancelledResult(output: fullOutput) }
+        guard versionResult.exitCode == 0 else {
+            return BuildResult(success: false, output: fullOutput + versionResult.combined)
+        }
         let xcodeVersion = versionResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let workspace = derivedDataRoot.appendingPathComponent(project.id.uuidString, isDirectory: true)
@@ -195,10 +228,15 @@ struct BuildCoordinator: Sendable {
             }
         }
 
-        let executor = BuildExecutor(runner: runner)
+        let executor = BuildExecutor(runner: runner, buildTimeout: TimeInterval(request.settings.normalized().buildTimeoutMinutes * 60))
         let baseArguments = BuildExecutor.baseArguments(for: project, derivedDataPath: workspace.path)
 
+        let settingsStage = ExecutionStage("解析构建设置", onProgress: onProgress)
+        fullOutput += settingsStage.startedLog
         let settingsResult = await executor.showBuildSettings(arguments: baseArguments, xcodePath: request.settings.xcodePath)
+        fullOutput += settingsStage.finish()
+        if Task.isCancelled { return .cancelledResult(output: fullOutput) }
+        if settingsResult.timedOut { return BuildResult(success: false, output: fullOutput + settingsResult.combined) }
         let expectedProduct = ProductResolver.expectedProductPath(
             fromBuildSettingsJSON: Data(settingsResult.stdout.utf8),
             preferredNames: [project.scheme, project.projectName]
@@ -213,7 +251,10 @@ struct BuildCoordinator: Sendable {
         var fallbackPending = false
         var attempt = 0
         buildLoop: while attempt < retry.maxAttempts {
+            let stage = ExecutionStage("编译与签名（第 \(attempt + 1) 次）", onProgress: onProgress)
+            fullOutput += stage.startedLog
             let buildResult = await executor.build(arguments: baseArguments, xcodePath: request.settings.xcodePath)
+            fullOutput += stage.finish()
             attempt += 1
             let buildOutput = buildResult.combined
             fullOutput += "=== BUILD \(attempt)/\(retry.maxAttempts) ===\n\(buildOutput)\n"
@@ -221,6 +262,11 @@ struct BuildCoordinator: Sendable {
             if Task.isCancelled { return .cancelledResult(output: fullOutput + "\n任务已取消") }
             if buildResult.exitCode == 0 {
                 buildSucceeded = true
+                break
+            }
+
+            if buildResult.timedOut {
+                fullOutput += "\n构建超过设定时限，本次停止自动重试，请检查阶段日志或调整构建超时。\n"
                 break
             }
 
@@ -234,6 +280,7 @@ struct BuildCoordinator: Sendable {
             switch retry.decision(afterAttempt: attempt, failureClass: FailureClassifier.classify(buildOutput)) {
             case .retryAfter(let seconds):
                 fullOutput += "\n检测到临时性构建错误，\(seconds) 秒后重试。\n"
+                onProgress("等待 \(seconds) 秒后重试构建")
                 do {
                     try await Task.sleep(for: .seconds(seconds))
                 } catch {
@@ -255,14 +302,17 @@ struct BuildCoordinator: Sendable {
             } catch {
                 fullOutput += "清除工作区失败：\(error.localizedDescription)\n"
             }
+            let fallbackStage = ExecutionStage("缓存回退构建", onProgress: onProgress)
+            fullOutput += fallbackStage.startedLog
             let fallbackResult = await executor.build(arguments: baseArguments, xcodePath: request.settings.xcodePath)
+            fullOutput += fallbackStage.finish()
             fullOutput += "=== FALLBACK BUILD（清除工作区后完整重建） ===\n\(fallbackResult.combined)\n"
             buildSucceeded = fallbackResult.exitCode == 0
             if !buildSucceeded && !Task.isCancelled {
                 fullOutput += "\n⚠️ 回退完整构建仍失败；工作区已是全新状态，请检查日志中的真实错误。\n"
             }
         }
-        if Task.isCancelled && !buildSucceeded { return .cancelledResult(output: fullOutput + "\n任务已取消") }
+        if Task.isCancelled { return .cancelledResult(output: fullOutput + "\n任务已取消") }
         guard buildSucceeded else {
             return BuildResult(success: false, output: fullOutput, buildMode: buildMode)
         }
@@ -337,18 +387,32 @@ struct BuildCoordinator: Sendable {
                 buildMode: buildMode
             )
 
-        case .devices(let deviceUDIDs):
-            let installer = AppInstaller(runner: runner)
+        case .devices:
+            let refreshStage = ExecutionStage("安装前刷新设备", onProgress: onProgress)
+            fullOutput += refreshStage.startedLog
+            let freshDevices = await discovery.listDevices(xcodePath: request.settings.xcodePath)
+            fullOutput += refreshStage.finish()
+            if Task.isCancelled { return .cancelledResult(output: fullOutput) }
+            let deviceUDIDs = DeviceSelection.resolveDeviceUDIDs(projectUDIDs: requestedDevices, availableDevices: freshDevices)
+            guard !deviceUDIDs.isEmpty else {
+                return BuildResult(success: false, output: fullOutput + "\n自动选择未找到当前可用设备；产物已生成，未安装。", builtAppPath: appPath, buildMode: buildMode)
+            }
+            let installer = AppInstaller(runner: runner, deviceDiscovery: discovery,
+                                         timeout: TimeInterval(request.settings.normalized().installTimeoutSeconds))
             let outcomes = await installer.install(
                 appPath: appPath,
                 deviceUDIDs: deviceUDIDs,
                 xcodePath: request.settings.xcodePath,
-                retry: retry
+                retry: retry,
+                onProgress: onProgress
             )
             for outcome in outcomes {
                 fullOutput += outcome.output
             }
-            if Task.isCancelled { return .cancelledResult(output: fullOutput + "\n任务已取消") }
+            if Task.isCancelled {
+                return BuildResult(success: false, output: fullOutput + "\n任务已取消", cancelled: true,
+                                   deviceOutcomes: outcomes, builtAppPath: appPath, buildMode: buildMode)
+            }
 
             let failedUDIDs = outcomes.filter { !$0.success }.map(\.udid)
             return BuildResult(
