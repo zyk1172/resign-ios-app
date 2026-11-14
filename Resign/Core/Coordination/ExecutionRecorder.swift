@@ -47,7 +47,8 @@ enum ExecutionRecorder {
             : (input.result.success ? .success : .failed)
 
         let failedNames = input.result.failedDeviceUDIDs.map { udid in
-            input.deviceNames[udid] ?? String(udid.prefix(8))
+            input.result.deviceOutcomes.first { $0.udid == udid }?.deviceName
+                ?? input.deviceNames[udid] ?? String(udid.prefix(8))
         }
 
         let (logFile, storedOutput) = externalize(input.result.output, input.startedAt)
@@ -64,9 +65,10 @@ enum ExecutionRecorder {
             deviceInstallSummaries: input.result.deviceOutcomes.isEmpty ? nil : input.result.deviceOutcomes.map { outcome in
                 DeviceInstallSummary(
                     udid: outcome.udid,
-                    deviceName: input.deviceNames[outcome.udid] ?? String(outcome.udid.prefix(8)),
+                    deviceName: outcome.deviceName ?? input.deviceNames[outcome.udid] ?? String(outcome.udid.prefix(8)),
                     success: outcome.success,
-                    attempts: outcome.attempts
+                    attempts: outcome.attempts,
+                    failureReason: outcome.failureReason
                 )
             },
             buildMode: input.result.buildMode

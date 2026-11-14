@@ -126,6 +126,16 @@ struct ScheduleView: View {
             Label("失败重试", systemImage: "arrow.clockwise.circle")
                 .font(.system(size: AppStyle.cardTitleSize, weight: .semibold))
 
+            formRow("构建超时") {
+                Stepper(value: $store.settings.buildTimeoutMinutes, in: 1...120) {
+                    stepperLabel("\(store.settings.buildTimeoutMinutes) 分钟", width: 64)
+                }
+            }
+            formRow("单次安装超时") {
+                Stepper(value: $store.settings.installTimeoutSeconds, in: 15...600, step: 15) {
+                    stepperLabel("\(store.settings.installTimeoutSeconds) 秒", width: 64)
+                }
+            }
             toggleRow("自动重试", value: \.enableRetry)
 
             if store.settings.enableRetry {
@@ -137,13 +147,13 @@ struct ScheduleView: View {
                     }
                 }
 
-                formRow("重试间隔") {
+                formRow("构建重试间隔") {
                     Stepper(value: $store.settings.retryIntervalMinutes, in: 1...120) {
                         stepperLabel("\(store.settings.retryIntervalMinutes) 分钟", width: 64)
                     }
                 }
 
-                Text("仅临时性错误（设备掉线、超时等）会自动重试；签名/配额类确定性错误立即停止")
+                Text("仅短暂连接故障会重试；安装每轮先尝试其他设备，重试间隔最多 30 秒。锁定、未信任、未就绪设备需手动处理；构建超时不自动重试。")
                     .font(.system(size: AppStyle.microSize))
                     .foregroundStyle(.tertiary)
                     .padding(.leading, AppStyle.formLabelWidth + 10)

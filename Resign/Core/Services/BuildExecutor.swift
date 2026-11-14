@@ -181,7 +181,7 @@ struct GitSourceSynchronizer: Sendable {
         await runner.run(
             Self.gitExecutable,
             arguments: ["-C", root.path] + arguments,
-            environment: ["GIT_TERMINAL_PROMPT": "0"]
+            environment: ["GIT_TERMINAL_PROMPT": "0"], timeout: ProcessTimeouts.command
         )
     }
 
@@ -198,6 +198,7 @@ struct GitSourceSynchronizer: Sendable {
 /// RetryPolicy / BuildCoordinator, including the once-per-run source preflight).
 struct BuildExecutor: Sendable {
     let runner: ProcessRunning
+    var buildTimeout: TimeInterval = 1800
 
     /// Common xcodebuild arguments for one project. Team is injected through
     /// DEVELOPMENT_TEAM so automatic signing uses the user-selected team.
@@ -222,7 +223,7 @@ struct BuildExecutor: Sendable {
         await runner.run(
             XcodeToolchain.xcodebuildPath(xcodePath: xcodePath),
             arguments: arguments + ["-showBuildSettings", "-json"],
-            environment: XcodeToolchain.environment(xcodePath: xcodePath)
+            environment: XcodeToolchain.environment(xcodePath: xcodePath), timeout: ProcessTimeouts.command
         )
     }
 
@@ -230,7 +231,7 @@ struct BuildExecutor: Sendable {
         await runner.run(
             XcodeToolchain.xcodebuildPath(xcodePath: xcodePath),
             arguments: arguments + ["build"],
-            environment: XcodeToolchain.environment(xcodePath: xcodePath)
+            environment: XcodeToolchain.environment(xcodePath: xcodePath), timeout: buildTimeout
         )
     }
 }

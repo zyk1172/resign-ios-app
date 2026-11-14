@@ -31,6 +31,8 @@ struct RetryPolicy: Equatable, Sendable {
     /// Decision after the given 1-based attempt has failed.
     func decision(afterAttempt attempt: Int, failureClass: FailureClass) -> Decision {
         switch failureClass {
+        case .requiresUserAction:
+            return .stop(reason: "设备需要连接、解锁或信任操作，已停止自动重试。")
         case .fatal:
             return .stop(reason: "失败原因为确定性问题（签名/Profile/账号配置），重试不会成功，已停止重试。")
         case .unknown:

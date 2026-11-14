@@ -22,7 +22,7 @@ final class FailureClassifierTests: XCTestCase {
 
     func testTransientErrorsAreRetryable() {
         XCTAssertEqual(FailureClassifier.classify("The network connection was lost"), .retryable)
-        XCTAssertEqual(FailureClassifier.classify("Device is locked"), .retryable)
+        XCTAssertEqual(FailureClassifier.classify("Device is locked"), .requiresUserAction)
         XCTAssertEqual(FailureClassifier.classify("Timed out waiting for device"), .retryable)
     }
 
@@ -89,10 +89,32 @@ final class FailureClassifierTests: XCTestCase {
         XCTAssertTrue(summary?.reason.contains("main") == true)
     }
 
+    func testDeviceActionsStopAutomaticRetryAndHaveChineseGuidance() {
+        for output in ["device was still locked. error 10003", "has not been unlocked recently", "usage assertion requirements. error 4016", "device not paired"] {
+            XCTAssertEqual(FailureClassifier.classify(output), .requiresUserAction)
+            XCTAssertFalse(FailureClassifier.isTransientFailure(output))
+            XCTAssertEqual(FailureClassifier.diagnose(output)?.location, "设备")
+        }
+        if case .stop = RetryPolicy(maxAttempts: 3, intervalSeconds: 1800).decision(afterAttempt: 1, failureClass: .requiresUserAction) {} else {
+            XCTFail("设备需要用户操作时不能等待重试")
+        }
+        let mixed = "No profiles for 'com.example.demo' were found\nCoreDevice error 4016"
+        XCTAssertEqual(FailureClassifier.classify(mixed), .fatal)
+        XCTAssertEqual(FailureClassifier.diagnose(mixed)?.location, "签名")
+    }
+
     func testCompilerErrorSummaryHasFileAndLine() {
         let summary = FailureClassifier.diagnose(
             "/Users/dev/Proj/ContentView.swift:42:7: error: cannot find 'foo' in scope"
         )
         XCTAssertEqual(summary?.location, "ContentView.swift:42")
+    }
+
+    func testNoAutomaticTargetHasDeviceSummaryBeforeAndAfterBuild() {
+        for output in ["错误：未找到可用的目标设备", "自动选择未找到当前可用设备；产物已生成，未安装。"] {
+            let summary = FailureClassifier.diagnose(output)
+            XCTAssertEqual(summary?.location, "设备")
+            XCTAssertTrue(summary?.reason.contains("解锁") == true)
+        }
     }
 }

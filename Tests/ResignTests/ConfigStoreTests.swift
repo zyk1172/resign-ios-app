@@ -144,6 +144,31 @@ final class ConfigStoreTests: XCTestCase {
         XCTAssertEqual(decoded.buildMode, .incrementalUnchanged)
     }
 
+    func testTimeoutSettingsRemainCompatibleWithOldConfigsAndNormalizeBounds() throws {
+        try writeConfig("{\"schemaVersion\":2,\"settings\":{}}")
+        let store = ConfigStore(directory: directory)
+        let loaded = store.load()
+        XCTAssertNil(loaded.error)
+        XCTAssertEqual(loaded.state.settings.buildTimeoutMinutes, 30)
+        XCTAssertEqual(loaded.state.settings.installTimeoutSeconds, 120)
+        var state = loaded.state
+        state.settings.buildTimeoutMinutes = 4
+        state.settings.installTimeoutSeconds = 45
+        try store.saveSynchronously(state)
+        XCTAssertEqual(store.load().state.settings.buildTimeoutMinutes, 4)
+        XCTAssertEqual(store.load().state.settings.installTimeoutSeconds, 45)
+        state.settings.buildTimeoutMinutes = -5
+        state.settings.installTimeoutSeconds = 9999
+        XCTAssertEqual(state.settings.normalized().buildTimeoutMinutes, 1)
+        XCTAssertEqual(state.settings.normalized().installTimeoutSeconds, 600)
+    }
+
+    func testLegacyDeviceSummaryDecodesWithoutFailureReason() throws {
+        let json = Data("{\"udid\":\"D1\",\"deviceName\":\"Phone\",\"success\":false,\"attempts\":1}".utf8)
+        let summary = try JSONDecoder().decode(DeviceInstallSummary.self, from: json)
+        XCTAssertNil(summary.failureReason)
+    }
+
     // MARK: - Merge semantics
 
     func testMergeUnionsLogsAndKeepsNewestExecutionState() {

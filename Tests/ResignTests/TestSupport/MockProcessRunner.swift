@@ -7,6 +7,7 @@ final class MockProcessRunner: ProcessRunning, @unchecked Sendable {
     struct Call {
         let executable: String
         let arguments: [String]
+        var timeout: TimeInterval? = nil
     }
 
     private let lock = NSLock()
@@ -37,8 +38,16 @@ final class MockProcessRunner: ProcessRunning, @unchecked Sendable {
         environment: [String: String],
         currentDirectory: String?
     ) async -> ProcessResult {
+        next(executable, arguments: arguments, timeout: nil)
+    }
+
+    func run(_ executable: String, arguments: [String], environment: [String: String], currentDirectory: String?, timeout: TimeInterval) async -> ProcessResult {
+        next(executable, arguments: arguments, timeout: timeout)
+    }
+
+    private func next(_ executable: String, arguments: [String], timeout: TimeInterval?) -> ProcessResult {
         lock.lock()
-        let call = Call(executable: executable, arguments: arguments)
+        let call = Call(executable: executable, arguments: arguments, timeout: timeout)
         calls.append(call)
         let response = responses.isEmpty ? defaultResponse : responses.removeFirst()
         let sideEffect = sideEffects.isEmpty ? nil : sideEffects.removeFirst()
@@ -60,4 +69,21 @@ final class MockProcessRunner: ProcessRunning, @unchecked Sendable {
 
 func makeProcessResult(exitCode: Int32, stdout: String = "", stderr: String = "") -> ProcessResult {
     ProcessResult(exitCode: exitCode, stdout: stdout, stderr: stderr)
+}
+
+struct FixedDeviceDiscovery: DeviceDiscovering {
+    let devices: [iOSDevice]
+    func listDevices(xcodePath: String) async -> [iOSDevice] { devices }
+}
+
+actor ScriptedDeviceDiscovery: DeviceDiscovering {
+    private var snapshots: [[iOSDevice]]
+    private var last: [iOSDevice] = []
+    private(set) var calls = 0
+    init(_ snapshots: [[iOSDevice]]) { self.snapshots = snapshots }
+    func listDevices(xcodePath: String) async -> [iOSDevice] {
+        calls += 1
+        if !snapshots.isEmpty { last = snapshots.removeFirst() }
+        return last
+    }
 }

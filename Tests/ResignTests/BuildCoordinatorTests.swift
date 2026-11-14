@@ -106,20 +106,19 @@ final class BuildCoordinatorTests: XCTestCase {
         coordinator.derivedDataRoot = derivedDataRoot ?? stateRoot.appendingPathComponent("derived", isDirectory: true)
         coordinator.buildLockPath = lockPath ?? stateRoot.appendingPathComponent("build.lock").path
         coordinator.buildCacheDirectory = cacheDirectory
+        coordinator.deviceDiscovery = FixedDeviceDiscovery(devices: makeDevices())
         return coordinator
     }
 
     private func makeRequest(
         project: iOSProject,
         settings: AppSettings? = nil,
-        devices: [iOSDevice]? = nil,
         retry: RetryPolicy? = nil,
         source: ExecutionSource = .manual
     ) -> BuildRequest {
         BuildRequest(
             project: project,
             settings: settings ?? makeSettings(),
-            availableDevices: devices ?? makeDevices(),
             source: source,
             retryPolicyOverride: retry ?? RetryPolicy(maxAttempts: 3, intervalSeconds: 0)
         )
@@ -199,6 +198,64 @@ final class BuildCoordinatorTests: XCTestCase {
         XCTAssertEqual(result.output.components(separatedBy: "=== SOURCE SYNC ===").count - 1, 1)
     }
 
+    func testAutoSelectionRefreshesAfterBuildAndUsesNewlyConnectedDevice() async throws {
+        let runner = MockProcessRunner()
+        createApp("Demo.app")
+        runner.enqueueVersion()
+        runner.enqueue(buildSettingsJSON(targets: [("Demo", "Demo.app")]))
+        let devices = makeDevices()
+        var coordinator = makeCoordinator(runner: runner)
+        coordinator.deviceDiscovery = ScriptedDeviceDiscovery([[devices[0]], [devices[1]], [devices[1]]])
+        let result = await coordinator.execute(makeRequest(project: makeProject()))
+        XCTAssertTrue(result.success, result.output)
+        XCTAssertEqual(result.deviceOutcomes.map(\.udid), ["D2"])
+        XCTAssertEqual(runner.calls(to: "xcrun").map { $0.arguments[5] }, ["D2"])
+        XCTAssertTrue(result.output.contains("阶段开始：安装前刷新设备"))
+        XCTAssertTrue(result.output.contains("阶段结束：编译与签名"))
+    }
+
+    func testOfflineExplicitSelectionNeverFallsBackToAnotherDevice() async {
+        let runner = MockProcessRunner()
+        var coordinator = makeCoordinator(runner: runner)
+        coordinator.deviceDiscovery = FixedDeviceDiscovery(devices: [makeDevices()[1]])
+        let result = await coordinator.execute(makeRequest(project: makeProject(deviceUDIDs: ["D1"])))
+        XCTAssertFalse(result.success)
+        XCTAssertEqual(result.failedDeviceUDIDs, ["D1"])
+        XCTAssertEqual(result.deviceOutcomes.first?.attempts, 0)
+        XCTAssertTrue(runner.recordedCalls.isEmpty)
+    }
+
+    func testDeviceDisconnectingDuringBuildProducesPartialSuccess() async {
+        let runner = MockProcessRunner()
+        createApp("Demo.app")
+        runner.enqueueVersion()
+        runner.enqueue(buildSettingsJSON(targets: [("Demo", "Demo.app")]))
+        let devices = makeDevices()
+        var coordinator = makeCoordinator(runner: runner)
+        coordinator.deviceDiscovery = ScriptedDeviceDiscovery([devices, [devices[1]]])
+        let result = await coordinator.execute(makeRequest(project: makeProject(deviceUDIDs: ["D1", "D2"])))
+        XCTAssertFalse(result.success)
+        XCTAssertTrue(result.isPartialSuccess)
+        XCTAssertTrue(result.completionSummary.contains("1/2"))
+        XCTAssertEqual(result.deviceOutcomes.map(\.attempts), [0, 1])
+        XCTAssertEqual(runner.calls(to: "xcrun").map { $0.arguments[5] }, ["D2"])
+    }
+
+    func testBuildTimeoutStopsWithoutRetryAndUsesConfiguredLimit() async {
+        let runner = MockProcessRunner()
+        runner.enqueueVersion()
+        runner.enqueue(buildSettingsJSON(targets: [("Demo", "Demo.app")]))
+        runner.enqueue(ProcessResult(exitCode: 124, stdout: "", stderr: "Process timed out after 180s", timedOut: true))
+        var settings = makeSettings()
+        settings.buildTimeoutMinutes = 3
+        let result = await makeCoordinator(runner: runner).execute(makeRequest(project: makeProject(), settings: settings))
+        XCTAssertFalse(result.success)
+        let builds = runner.calls(to: "xcodebuild").filter { $0.arguments.last == "build" }
+        XCTAssertEqual(builds.count, 1)
+        XCTAssertEqual(builds.first?.timeout, 180)
+        XCTAssertTrue(result.output.contains("本次停止自动重试"))
+    }
+
     func testHappyPathResolvesNamedProductAndInstallsAllDevices() async throws {
         let runner = MockProcessRunner()
         let appURL = createApp("Demo.app")
@@ -206,7 +263,7 @@ final class BuildCoordinatorTests: XCTestCase {
         runner.enqueue(buildSettingsJSON(targets: [("Widget", "Widget.app"), ("Demo", "Demo.app")]))
 
         let devices = makeDevices()
-        let request = makeRequest(project: makeProject(deviceUDIDs: devices.map(\.udid)), devices: devices)
+        let request = makeRequest(project: makeProject(deviceUDIDs: devices.map(\.udid)))
         let result = await makeCoordinator(runner: runner).execute(request)
 
         XCTAssertTrue(result.success)
@@ -334,13 +391,13 @@ final class BuildCoordinatorTests: XCTestCase {
         runner.enqueueVersion()
         runner.enqueue(buildSettingsJSON(targets: [("Demo", "Demo.app")]))
         runner.enqueue(makeProcessResult(exitCode: 0, stdout: "BUILD SUCCEEDED"))
-        // Round structure per device: D1 ok; D2 fails transiently then succeeds.
+        // First round: D1 succeeds, D2 fails; second round retries only D2.
         runner.enqueue(makeProcessResult(exitCode: 0))
         runner.enqueue(makeProcessResult(exitCode: 1, stderr: "The network connection was lost"))
         runner.enqueue(makeProcessResult(exitCode: 0))
 
         let devices = makeDevices()
-        let request = makeRequest(project: makeProject(deviceUDIDs: devices.map(\.udid)), devices: devices)
+        let request = makeRequest(project: makeProject(deviceUDIDs: devices.map(\.udid)))
         let result = await makeCoordinator(runner: runner).execute(request)
 
         XCTAssertTrue(result.success)
@@ -362,7 +419,7 @@ final class BuildCoordinatorTests: XCTestCase {
         runner.enqueue(makeProcessResult(exitCode: 1, stderr: "0xe8008012 provisioning profile cannot be installed on this device"))
 
         let devices = makeDevices()
-        let request = makeRequest(project: makeProject(deviceUDIDs: devices.map(\.udid)), devices: devices)
+        let request = makeRequest(project: makeProject(deviceUDIDs: devices.map(\.udid)))
         let result = await makeCoordinator(runner: runner).execute(request)
 
         XCTAssertFalse(result.success)
@@ -370,7 +427,7 @@ final class BuildCoordinatorTests: XCTestCase {
         XCTAssertEqual(runner.calls(to: "xcrun").filter { $0.arguments.contains("D2") }.count, 1, "fatal 设备停止重试")
     }
 
-    func testDeviceOverrideBypassesDefaultSelection() async throws {
+    func testDeviceOverrideUsesFreshDiscoveryRatherThanProjectSelection() async throws {
         let runner = MockProcessRunner()
         createApp("Demo.app")
         runner.enqueueVersion()
@@ -378,10 +435,9 @@ final class BuildCoordinatorTests: XCTestCase {
         runner.enqueue(makeProcessResult(exitCode: 0, stdout: "BUILD SUCCEEDED"))
         runner.enqueue(makeProcessResult(exitCode: 0))
 
-        // Project has no saved devices and only D1 is available; the explicit
-        // "push to this device" target D2 must win over both rules.
-        let onlyD1 = [iOSDevice(udid: "D1", name: "iPhone", osVersion: "18.0", connectionType: "USB", isAvailable: true)]
-        var request = makeRequest(project: makeProject(), devices: onlyD1)
+        // A one-off push to D2 overrides the project's normal target D1.
+        // Availability comes exclusively from execution-time discovery.
+        var request = makeRequest(project: makeProject(deviceUDIDs: ["D1"]))
         request.deviceOverride = ["D2"]
 
         let result = await makeCoordinator(runner: runner).execute(request)
@@ -478,14 +534,15 @@ final class BuildCoordinatorTests: XCTestCase {
 
     func testMissingDevicesFailsWithoutBuild() async throws {
         let runner = MockProcessRunner()
-        let result = await makeCoordinator(runner: runner)
-            .execute(makeRequest(project: makeProject(), devices: [iOSDevice(udid: "X", name: "n", osVersion: "", connectionType: "", isAvailable: false)]))
+        var coordinator = makeCoordinator(runner: runner)
+        coordinator.deviceDiscovery = FixedDeviceDiscovery(devices: [])
+        let result = await coordinator.execute(makeRequest(project: makeProject()))
 
         XCTAssertFalse(result.success)
         let probe = FileLock(path: stateRoot.appendingPathComponent("build.lock").path)
         probe.release()
 
-        XCTAssertTrue(result.output.contains("未找到可用的已连接设备"))
+        XCTAssertTrue(result.output.contains("未找到可用的目标设备"))
         XCTAssertTrue(runner.recordedCalls.isEmpty)
     }
 
@@ -602,8 +659,7 @@ final class BuildCoordinatorTests: XCTestCase {
         let runner = MockProcessRunner()
         createApp("Demo.app")
         let project = makeProject(deviceUDIDs: makeDevices().map(\.udid))
-        let devices = makeDevices()
-        let request = makeRequest(project: project, devices: devices)
+        let request = makeRequest(project: project)
         let coordinator = makeCoordinator(runner: runner)
         let workspace = stateRoot.appendingPathComponent("derived/\(project.id.uuidString)", isDirectory: true)
 
@@ -685,8 +741,7 @@ final class BuildCoordinatorTests: XCTestCase {
         let runner = MockProcessRunner()
         createApp("Demo.app")
         let project = makeProject(deviceUDIDs: makeDevices().map(\.udid))
-        let devices = makeDevices()
-        let request = makeRequest(project: project, devices: devices)
+        let request = makeRequest(project: project)
         let coordinator = makeCoordinator(runner: runner)
         let workspace = stateRoot.appendingPathComponent("derived/\(project.id.uuidString)", isDirectory: true)
 
@@ -726,8 +781,7 @@ final class BuildCoordinatorTests: XCTestCase {
         let runner = MockProcessRunner()
         createApp("Demo.app")
         let project = makeProject(deviceUDIDs: makeDevices().map(\.udid))
-        let devices = makeDevices()
-        let request = makeRequest(project: project, devices: devices)
+        let request = makeRequest(project: project)
         let coordinator = makeCoordinator(runner: runner)
 
         runner.enqueueVersion()

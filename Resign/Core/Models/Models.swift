@@ -124,8 +124,10 @@ struct AppSettings: Codable, Equatable, Sendable {
     var enableRetry: Bool = true
     /// Max retry attempts (0 = no retry)
     var maxRetries: Int = 2
-    /// Minutes between retry attempts
+    /// Minutes between build retries. Installation waits at most 30 seconds.
     var retryIntervalMinutes: Int = 30
+    var buildTimeoutMinutes: Int = 30
+    var installTimeoutSeconds: Int = 120
 
     func normalized() -> AppSettings {
         var s = self
@@ -135,6 +137,8 @@ struct AppSettings: Codable, Equatable, Sendable {
         s.buildCooldownSeconds = min(max(s.buildCooldownSeconds, 0), 60)
         s.maxRetries = min(max(s.maxRetries, 0), 3)
         s.retryIntervalMinutes = min(max(s.retryIntervalMinutes, 1), 120)
+        s.buildTimeoutMinutes = min(max(s.buildTimeoutMinutes, 1), 120)
+        s.installTimeoutSeconds = min(max(s.installTimeoutSeconds, 15), 600)
         return s
     }
 }
@@ -186,6 +190,7 @@ struct DeviceInstallSummary: Codable, Equatable, Hashable, Sendable {
     var deviceName: String
     var success: Bool
     var attempts: Int
+    var failureReason: String? = nil
 }
 
 // MARK: - Build Log Entry
@@ -220,6 +225,16 @@ struct BuildLogEntry: Identifiable, Codable, Equatable, Hashable, Sendable {
         return m > 0 ? "\(m)m \(s)s" : "\(s)s"
     }
 
+    var isPartialSuccess: Bool {
+        guard status == .failed, let summaries = deviceInstallSummaries else { return false }
+        return summaries.contains { $0.success } && summaries.contains { !$0.success }
+    }
+
+    var statusLabel: String {
+        guard isPartialSuccess, let summaries = deviceInstallSummaries else { return status.label }
+        return "部分成功（\(summaries.filter(\.success).count)/\(summaries.count) 台）"
+    }
+
     /// Concise "where + why" summary for failed builds
     var errorSummary: BuildErrorSummary? {
         guard status == .failed else { return nil }
@@ -227,7 +242,8 @@ struct BuildLogEntry: Identifiable, Codable, Equatable, Hashable, Sendable {
         // If specific devices failed, include them in the location
         if let names = failedDevices, !names.isEmpty {
             let devicePart = names.joined(separator: "、")
-            let reason = base?.reason ?? "安装失败"
+            let reason = deviceInstallSummaries?.first(where: { !$0.success && $0.failureReason != nil })?.failureReason
+                ?? base?.reason ?? "安装失败"
             return BuildErrorSummary(location: "安装 → \(devicePart)", reason: reason)
         }
         return base
@@ -326,6 +342,7 @@ extension AppSettings {
         case resignIntervalDays, scheduleHour, scheduleMinute, xcodePath
         case preventSleep, notifyOnComplete, autoInstallSchedule
         case buildCooldownSeconds, enableRetry, maxRetries, retryIntervalMinutes
+        case buildTimeoutMinutes, installTimeoutSeconds
     }
 
     init(from decoder: Decoder) throws {
@@ -342,6 +359,8 @@ extension AppSettings {
         enableRetry = try c.decodeIfPresent(Bool.self, forKey: .enableRetry) ?? true
         maxRetries = try c.decodeIfPresent(Int.self, forKey: .maxRetries) ?? 2
         retryIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .retryIntervalMinutes) ?? 30
+        buildTimeoutMinutes = try c.decodeIfPresent(Int.self, forKey: .buildTimeoutMinutes) ?? 30
+        installTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .installTimeoutSeconds) ?? 120
     }
 }
 

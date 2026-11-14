@@ -31,8 +31,8 @@ struct ScheduledRunCoordinator: Sendable {
         if let error = loaded.error {
             // 配置损坏时绝不能"成功地什么都不做"：launchd 会把 exit 0 记为
             // 成功，用户会以为后台续签正常执行了。
-            print("[ResignWorker] \(error)")
-            print("[ResignWorker] 已中止：配置读取失败（exit \(WorkerExitCode.configInvalid.rawValue)）")
+            Self.writeLog("[ResignWorker] \(error)")
+            Self.writeLog("[ResignWorker] 已中止：配置读取失败（exit \(WorkerExitCode.configInvalid.rawValue)）")
             return WorkerExitCode.configInvalid.rawValue
         }
         let state = loaded.state
@@ -40,7 +40,7 @@ struct ScheduledRunCoordinator: Sendable {
 
         let enabled = state.projects.filter { $0.isEnabled && !$0.projectPath.isEmpty }
         guard !enabled.isEmpty else {
-            print("[ResignWorker] 没有已启用的项目，结束")
+            Self.writeLog("[ResignWorker] 没有已启用的项目，结束")
             return WorkerExitCode.ok.rawValue
         }
 
@@ -57,15 +57,10 @@ struct ScheduledRunCoordinator: Sendable {
             )
         }
         guard !due.isEmpty else {
-            print("[ResignWorker] 所有项目均未到期，结束")
+            Self.writeLog("[ResignWorker] 所有项目均未到期，结束")
             return WorkerExitCode.ok.rawValue
         }
-        print("[ResignWorker] 到期项目：\(due.map(\.name).joined(separator: "、"))")
-
-        // Same structured device discovery as the GUI.
-        let deviceService = DeviceService(runner: runner)
-        let devices = await deviceService.listDevices(xcodePath: settings.xcodePath)
-        let deviceNames = Dictionary(uniqueKeysWithValues: devices.map { ($0.udid, $0.name) })
+        Self.writeLog("[ResignWorker] 到期项目：\(due.map(\.name).joined(separator: "、"))")
 
         let coordinator = BuildCoordinator(runner: runner)
 
@@ -84,15 +79,16 @@ struct ScheduledRunCoordinator: Sendable {
         var persistenceFailed = false
         for (index, project) in due.enumerated() {
             let startedAt = Date()
-            print("[ResignWorker] 开始构建：\(project.name)")
+            Self.writeLog("[ResignWorker] 开始构建：\(project.name)")
 
             let request = BuildRequest(
                 project: project,
                 settings: settings,
-                availableDevices: devices,
                 source: .scheduled
             )
-            let result = await coordinator.execute(request)
+            let result = await coordinator.execute(request) { progress in
+                Self.writeLog("[ResignWorker] \(project.name)：\(progress)")
+            }
             let duration = Date().timeIntervalSince(startedAt)
 
             // Record into the single source of truth (atomic read-modify-write).
@@ -105,8 +101,7 @@ struct ScheduledRunCoordinator: Sendable {
                             result: result,
                             source: .scheduled,
                             startedAt: startedAt,
-                            durationSeconds: duration,
-                            deviceNames: deviceNames
+                            durationSeconds: duration
                         ),
                         to: &currentState
                     ) { raw, date in
@@ -115,10 +110,10 @@ struct ScheduledRunCoordinator: Sendable {
                 }
             } catch {
                 persistenceFailed = true
-                print("[ResignWorker] ⚠️ 结果写入失败：\(error.localizedDescription)")
+                Self.writeLog("[ResignWorker] ⚠️ 结果写入失败：\(error.localizedDescription)")
             }
 
-            print("[ResignWorker] \(result.success ? "✓" : "✗") \(project.name)（耗时 \(Int(duration))s）")
+            Self.writeLog("[ResignWorker] \(project.name)：\(result.completionSummary)（耗时 \(Int(duration))s）")
 
             if !result.success { anyFailure = true }
 
@@ -140,6 +135,10 @@ struct ScheduledRunCoordinator: Sendable {
 
         if persistenceFailed { return WorkerExitCode.persistenceFailed.rawValue }
         return anyFailure ? WorkerExitCode.executionFailed.rawValue : WorkerExitCode.ok.rawValue
+    }
+
+    private static func writeLog(_ message: String) {
+        FileHandle.standardOutput.write(Data((message + "\n").utf8))
     }
 
     /// 通知内容按严重度排序：落盘失败 > 执行失败 > 成功。

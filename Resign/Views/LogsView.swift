@@ -79,7 +79,7 @@ struct LogCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 // Top row
                 HStack(spacing: 10) {
-                    Image(systemName: entry.status.symbolName)
+                    Image(systemName: entry.isPartialSuccess ? "exclamationmark.circle.fill" : entry.status.symbolName)
                         .font(.system(size: 13))
                         .foregroundStyle(statusColor)
                         .frame(width: 20)
@@ -119,7 +119,7 @@ struct LogCard: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)
 
-                    Text(entry.status.label)
+                    Text(entry.statusLabel)
                         .font(.system(size: AppStyle.captionSize, weight: .medium))
                         .padding(.horizontal, AppStyle.badgeHPadding)
                         .padding(.vertical, AppStyle.badgeVPadding)
@@ -168,6 +168,7 @@ struct LogCard: View {
     }
 
     private var statusColor: Color {
+        if entry.isPartialSuccess { return .orange }
         switch entry.status {
         case .success:   return .green
         case .failed:    return .red
@@ -187,11 +188,14 @@ struct LogDetailSheet: View {
         VStack(spacing: 0) {
             // Header
             HStack(spacing: 10) {
-                Image(systemName: entry.status.symbolName)
+                Image(systemName: entry.isPartialSuccess ? "exclamationmark.circle.fill" : entry.status.symbolName)
                     .font(.system(size: 15))
-                    .foregroundStyle(entry.status == .success ? .green : .red)
+                    .foregroundStyle(entry.isPartialSuccess ? Color.orange : (entry.status == .success ? .green : .red))
                 Text(entry.projectName)
                     .font(.system(size: 14, weight: .semibold))
+                Text(entry.statusLabel)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Text(entry.date.formatted(date: .abbreviated, time: .standard))
                     .font(.system(size: 11))
