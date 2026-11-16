@@ -36,6 +36,15 @@ final class DeviceTests: XCTestCase {
         XCTAssertEqual(DeviceService.parseDevices(json: json).first?.isAvailable, false)
     }
 
+    func testPairedIdleTunnelIsAvailableForOnDemandConnection() throws {
+        for transport in ["localNetwork", "wired"] {
+            let devices = DeviceService.parseDevices(json: try pairedIdleDevicesJSON(transport: transport))
+            XCTAssertEqual(devices.count, 2)
+            XCTAssertTrue(devices.allSatisfy(\.isAvailable), "disconnected is an idle tunnel, not an unavailable device: \(transport)")
+            XCTAssertEqual(DeviceSelection.resolveDeviceUDIDs(projectUDIDs: [], availableDevices: devices).count, 1)
+        }
+    }
+
     // MARK: - devicectl JSON parsing
 
     func testParseDevicesFiltersToPhysicalAndSortsAvailableFirst() throws {

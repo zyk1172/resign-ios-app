@@ -225,6 +225,23 @@ final class BuildCoordinatorTests: XCTestCase {
         XCTAssertTrue(runner.recordedCalls.isEmpty)
     }
 
+    func testIdlePairedPhonesReachSigningAndBothInstallsForManualAndScheduledRuns() async throws {
+        for source in [ExecutionSource.manual, .scheduled] {
+            let runner = MockProcessRunner()
+            createApp("Demo.app")
+            runner.enqueueVersion()
+            runner.enqueue(buildSettingsJSON(targets: [("Demo", "Demo.app")]))
+            var coordinator = makeCoordinator(runner: runner)
+            coordinator.deviceDiscovery = FixedDeviceDiscovery(devices: DeviceService.parseDevices(json: try pairedIdleDevicesJSON()))
+            let request = makeRequest(project: makeProject(deviceUDIDs: ["D1", "D2"]), source: source)
+            let result = await coordinator.execute(request)
+            XCTAssertTrue(result.success, result.output)
+            XCTAssertEqual(runner.calls(to: "xcodebuild").filter { $0.arguments.last == "build" }.count, 1)
+            XCTAssertEqual(runner.calls(to: "xcrun").map { $0.arguments[5] }, ["D1", "D2"])
+            XCTAssertEqual(result.deviceOutcomes.map(\.attempts), [1, 1])
+        }
+    }
+
     func testDeviceDisconnectingDuringBuildProducesPartialSuccess() async {
         let runner = MockProcessRunner()
         createApp("Demo.app")
