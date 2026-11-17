@@ -50,8 +50,8 @@ final class MacAppInstallerTests: XCTestCase {
         try makeInfoPlist().write(to: applications.appendingPathComponent("Demo.app/Contents/Info.plist"), atomically: true, encoding: .utf8)
     }
 
-    /// CFBundleExecutable 与 .app 文件名不同名的场景也用同一夹具覆盖：
-    /// 这里故意让可执行名 == Demo，同时提供 bundle id 供精确退出。
+    /// Default fixture; separate tests rename the bundle while keeping the
+    /// executable name Demo to cover the differing-name workflow.
     private func makeInfoPlist() -> String {
         """
         <?xml version="1.0" encoding="UTF-8"?>
@@ -61,6 +61,65 @@ final class MacAppInstallerTests: XCTestCase {
             <key>CFBundleIdentifier</key><string>com.resign.test.demo</string>
         </dict></plist>
         """
+    }
+
+    private func writeInfo(bundleID: String?, executable: String = "Demo",
+                           format: PropertyListSerialization.PropertyListFormat = .xml) throws {
+        var info = ["CFBundleExecutable": executable]
+        if let bundleID { info["CFBundleIdentifier"] = bundleID }
+        let data = try PropertyListSerialization.data(fromPropertyList: info, format: format, options: 0)
+        try data.write(to: builtApp.appendingPathComponent("Contents/Info.plist"))
+    }
+
+    private func enqueueGracefulExit() {
+        runner.enqueue(makeProcessResult(exitCode: 0)) // pgrep: running
+        runner.enqueue(makeProcessResult(exitCode: 0)) // osascript
+        runner.enqueue(makeProcessResult(exitCode: 1)) // pgrep: exited
+    }
+
+    func testBundleIdentifierCannotBecomeAppleScriptSource() async throws {
+        let payloads = ["com.example.demo\"\nreturn \"injected\"\n--", "com.example.\\\"demo", "-e return 42"]
+        var scriptSource: String?
+        for (index, payload) in payloads.enumerated() {
+            // Both XML entity decoding and binary plists reach the same boundary.
+            try writeInfo(bundleID: payload, format: index.isMultiple(of: 2) ? .xml : .binary)
+            enqueueGracefulExit()
+            let result = await installer.install(appPath: builtApp.path)
+            XCTAssertTrue(result.success, result.output)
+            let call = try XCTUnwrap(runner.recordedCalls.last { $0.executable == "/usr/bin/osascript" })
+            XCTAssertEqual(Array(call.arguments.suffix(3)), ["--", "id", payload])
+            XCTAssertFalse(call.arguments[1].contains(payload), "Metadata must never be parsed as script source")
+            if let scriptSource { XCTAssertEqual(call.arguments[1], scriptSource) }
+            scriptSource = call.arguments[1]
+        }
+    }
+
+    func testMissingBundleIdentifierUsesAppNameAsDataAndExecutableForProcessLookup() async throws {
+        let renamed = builtApp.deletingLastPathComponent().appendingPathComponent("Nice Demo.app")
+        try FileManager.default.moveItem(at: builtApp, to: renamed)
+        builtApp = renamed
+        try writeInfo(bundleID: nil)
+        enqueueGracefulExit()
+        let result = await installer.install(appPath: builtApp.path)
+        XCTAssertTrue(result.success, result.output)
+        let call = try XCTUnwrap(runner.recordedCalls.first { $0.executable == "/usr/bin/osascript" })
+        XCTAssertEqual(Array(call.arguments.suffix(3)), ["--", "name", "Nice Demo"])
+        XCTAssertEqual(runner.calls(to: "pgrep").first?.arguments, ["-x", "--", "Demo"])
+    }
+
+    func testExecutableNameIsLiteralForLookupAndTermination() async throws {
+        let executable = "-Demo.*+(Test)"
+        try writeInfo(bundleID: "com.resign.test.demo", executable: executable)
+        runner.enqueue(makeProcessResult(exitCode: 0)) // running
+        runner.enqueue(makeProcessResult(exitCode: 0)) // osascript
+        runner.enqueue(makeProcessResult(exitCode: 0)) // still running
+        runner.enqueue(makeProcessResult(exitCode: 0)) // pkill
+        runner.enqueue(makeProcessResult(exitCode: 1)) // exited
+        let result = await installer.install(appPath: builtApp.path)
+        XCTAssertTrue(result.success, result.output)
+        let pattern = NSRegularExpression.escapedPattern(for: executable)
+        XCTAssertTrue(runner.calls(to: "pgrep").allSatisfy { $0.arguments == ["-x", "--", pattern] })
+        XCTAssertEqual(runner.calls(to: "pkill").first?.arguments, ["-TERM", "-x", "--", pattern])
     }
 
     // MARK: - Fresh install
@@ -109,7 +168,10 @@ final class MacAppInstallerTests: XCTestCase {
         XCTAssertFalse(executables.contains("/usr/bin/pkill"), "优雅退出成功后不应强杀")
         XCTAssertTrue(outcome.output.contains("正在运行"))
         let osascript = try XCTUnwrap(runner.recordedCalls.first { $0.executable == "/usr/bin/osascript" })
-        XCTAssertEqual(osascript.arguments, ["-e", "quit app id \"com.resign.test.demo\""], "必须按 bundle id 精确寻址退出")
+        XCTAssertEqual(osascript.arguments.first, "-e")
+        XCTAssertTrue(osascript.arguments[1].contains("on run argv"))
+        XCTAssertFalse(osascript.arguments[1].contains("com.resign.test.demo"))
+        XCTAssertEqual(Array(osascript.arguments.suffix(3)), ["--", "id", "com.resign.test.demo"], "必须按 bundle id 精确寻址退出")
     }
 
     func testSendsTermWhenGracefulQuitFails() async throws {

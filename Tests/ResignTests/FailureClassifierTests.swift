@@ -81,9 +81,14 @@ final class FailureClassifierTests: XCTestCase {
         XCTAssertTrue(FailureClassifier.diagnose(output)?.reason.contains("登录") == true)
     }
 
-    func testSourceFailureHasActionableSourceSummary() {
+    func testHistoricalSourceFailureLogKeepsActionableSummaryAfterRoundTrip() throws {
         let output = "=== SOURCE SYNC ===\n源码版本检查失败：远端分支 origin/retired 不存在；请先在源码仓库选择 main 并同步。\n"
-        let summary = FailureClassifier.diagnose(output)
+        let entry = BuildLogEntry(date: Date(timeIntervalSince1970: 1_000), projectName: "Legacy",
+                                  status: .failed, output: output, durationSeconds: 1)
+        let stored = try JSONEncoder().encode(entry)
+        let restored = try JSONDecoder().decode(BuildLogEntry.self, from: stored)
+        // Diagnose through the same entry point used by the real log view.
+        let summary = restored.errorSummary
         XCTAssertEqual(summary?.location, "源码")
         XCTAssertTrue(summary?.reason.contains("origin/retired") == true)
         XCTAssertTrue(summary?.reason.contains("main") == true)

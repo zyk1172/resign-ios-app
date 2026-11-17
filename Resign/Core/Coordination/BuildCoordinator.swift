@@ -142,18 +142,9 @@ struct BuildCoordinator: Sendable {
             installPlan = .devices
         }
 
-        // Source checks must finish before fingerprints or destructive cache /
-        // profile preparation. A missing upstream must not remove a valid app
-        // or provisioning profile, and the cache must describe the fetched code.
-        let sourceStage = ExecutionStage("源码检查", onProgress: onProgress)
-        fullOutput += sourceStage.startedLog
-        let sourceSync = await GitSourceSynchronizer(runner: runner)
-            .synchronize(projectPath: project.projectPath)
-        fullOutput += (sourceSync.log.isEmpty ? "" : "=== SOURCE SYNC ===\n\(sourceSync.log)\n") + sourceStage.finish()
-        if Task.isCancelled { return .cancelledResult(output: fullOutput + "\n任务已取消") }
-        guard sourceSync.success else {
-            return BuildResult(success: false, output: fullOutput)
-        }
+        // Build the local working tree exactly as it is, including local edits.
+        // Source synchronization belongs to the user, not the signing workflow.
+        fullOutput += "\n源码：使用当前本地工作区，不执行 Git 操作。\n"
 
         // ── 缓存决策（GUI 与 Worker 共用同一逻辑）──
         let fingerprintStage = ExecutionStage("计算构建指纹", onProgress: onProgress)
