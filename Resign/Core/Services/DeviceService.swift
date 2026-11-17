@@ -49,7 +49,10 @@ struct DeviceService: DeviceDiscovering {
             let transport = connection?["transportType"] as? String ?? ""
             let pairing = connection?["pairingState"] as? String ?? ""
             let tunnel = connection?["tunnelState"] as? String
-            let disconnected = tunnel == "unavailable" || tunnel == "disconnected"
+            // devicectl reports paired, booted phones with an idle tunnel as
+            // "available (paired)". The next device command connects on demand;
+            // only an explicitly unavailable tunnel rules the device out.
+            let unavailable = tunnel == "unavailable"
 
             let connectionType: String
             switch transport {
@@ -63,7 +66,7 @@ struct DeviceService: DeviceDiscovering {
                 name: name,
                 osVersion: osVersion,
                 connectionType: connectionType,
-                isAvailable: pairing == "paired" && bootState == "booted" && !transport.isEmpty && !disconnected
+                isAvailable: pairing == "paired" && bootState == "booted" && !transport.isEmpty && !unavailable
             )
         }
         .sorted {

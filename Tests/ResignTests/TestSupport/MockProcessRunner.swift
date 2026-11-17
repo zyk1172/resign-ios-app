@@ -71,6 +71,19 @@ func makeProcessResult(exitCode: Int32, stdout: String = "", stderr: String = ""
     ProcessResult(exitCode: exitCode, stdout: stdout, stderr: stderr)
 }
 
+/// Sanitized shape of paired physical devices reported as available by
+/// devicectl even when their on-demand tunnel has not yet been established.
+func pairedIdleDevicesJSON(transport: String = "localNetwork") throws -> Data {
+    let devices: [[String: Any]] = ["D1", "D2"].map { id in
+        [
+            "hardwareProperties": ["udid": id, "reality": "physical"],
+            "deviceProperties": ["name": "Phone \(id)", "bootState": "booted", "ddiServicesAvailable": false],
+            "connectionProperties": ["pairingState": "paired", "transportType": transport, "tunnelState": "disconnected"]
+        ]
+    }
+    return try JSONSerialization.data(withJSONObject: ["result": ["devices": devices]])
+}
+
 struct FixedDeviceDiscovery: DeviceDiscovering {
     let devices: [iOSDevice]
     func listDevices(xcodePath: String) async -> [iOSDevice] { devices }

@@ -35,6 +35,7 @@ cd "$PROJECT_ROOT"
 xcodegen generate
 
 export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
+DERIVED_DATA_PATH=${DERIVED_DATA_PATH:-"$PROJECT_ROOT/build/DerivedData"}
 
 printf '\n==> build-for-testing (Debug, macOS) ...\n'
 "$XCODEBUILD" \
@@ -42,6 +43,7 @@ printf '\n==> build-for-testing (Debug, macOS) ...\n'
     -scheme Resign \
     -configuration Debug \
     -destination 'platform=macOS' \
+    -derivedDataPath "$DERIVED_DATA_PATH" \
     build-for-testing
 
 printf '\n==> test-without-building ...\n'
@@ -50,6 +52,7 @@ printf '\n==> test-without-building ...\n'
     -scheme Resign \
     -configuration Debug \
     -destination 'platform=macOS' \
+    -derivedDataPath "$DERIVED_DATA_PATH" \
     -test-timeouts-enabled YES \
     -default-test-execution-time-allowance 60 \
     -maximum-test-execution-time-allowance 120 \

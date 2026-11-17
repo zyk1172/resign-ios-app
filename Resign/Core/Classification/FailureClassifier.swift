@@ -66,6 +66,8 @@ enum FailureClassifier {
         let text = output.lowercased()
         let lines = output.components(separatedBy: .newlines)
 
+        // Legacy logs remain in config.json after source synchronization was
+        // removed. The log UI still diagnoses their stored output on demand.
         if let failure = lines.first(where: { $0.contains("源码版本检查失败：") }) {
             return BuildErrorSummary(
                 location: "源码",

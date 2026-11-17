@@ -7,7 +7,7 @@ import XCTest
 /// semantics for GUI and scheduled execution.
 ///
 /// 每个 execute 的外部调用顺序（供 mock 队列排布）：
-///   0. Git 源码预检（有 Git 仓库时；通过后才准备缓存/Profile）
+///   0. 本地源码指纹（不执行 Git，不同步源码）
 ///   1. xcodebuild -version（缓存决策）
 ///   2. xcodebuild -showBuildSettings
 ///   3. xcodebuild build（可重试/回退）
@@ -126,76 +126,49 @@ final class BuildCoordinatorTests: XCTestCase {
 
     // MARK: - Happy path
 
-    func testSourceFailurePreservesExistingProductsAndProfilesWithoutBuilding() async throws {
-        try FileManager.default.createDirectory(at: projectRoot.appendingPathComponent(".git"), withIntermediateDirectories: true)
-        try Data("PRODUCT_BUNDLE_IDENTIFIER = com.example.demo;".utf8)
-            .write(to: URL(fileURLWithPath: projectPath).appendingPathComponent("project.pbxproj"))
-        let project = makeProject()
-        let workspaceRoot = stateRoot.appendingPathComponent("derived")
-        let products = BuildCoordinator.productsDirectory(
-            workspace: workspaceRoot.appendingPathComponent(project.id.uuidString),
-            configuration: project.configuration, platform: project.platform
-        )
-        let existingApp = products.appendingPathComponent("Demo.app")
-        try FileManager.default.createDirectory(at: existingApp, withIntermediateDirectories: true)
-        let marker = existingApp.appendingPathComponent("preserve.txt")
-        try Data("existing app".utf8).write(to: marker)
-        let profiles = stateRoot.appendingPathComponent("profiles")
-        try FileManager.default.createDirectory(at: profiles, withIntermediateDirectories: true)
-        let profileURL = profiles.appendingPathComponent("existing.mobileprovision")
-        let xml = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <plist version="1.0"><dict><key>Entitlements</key><dict>
-        <key>application-identifier</key><string>ABCDE12345.com.example.demo</string>
-        </dict></dict></plist>
-        """
-        try Data(xml.utf8).write(to: profileURL)
-
-        let runner = MockProcessRunner()
-        for output in ["origin\n", "main\n", "origin/main\n", "", "abc123\n"] {
-            runner.enqueue(makeProcessResult(exitCode: 0, stdout: output))
+    func testLocalProjectBuildsWithoutGitForManualAndScheduledRuns() async throws {
+        let gitDirectory = projectRoot.appendingPathComponent(".git", isDirectory: true)
+        try FileManager.default.createDirectory(at: gitDirectory, withIntermediateDirectories: true)
+        let head = gitDirectory.appendingPathComponent("HEAD")
+        let source = projectRoot.appendingPathComponent("Source.swift")
+        // Detached metadata, an unreachable remote and uncommitted edits must
+        // not prevent building the local files or cause any Git invocation.
+        try Data("local-detached-commit\n".utf8).write(to: head)
+        try Data("[remote \"origin\"]\nurl = https://invalid.example/repository\n".utf8)
+            .write(to: gitDirectory.appendingPathComponent("config"))
+        try Data("let localEdit = true\n".utf8).write(to: source)
+        createApp("Demo.app")
+        for executionSource in [ExecutionSource.manual, .scheduled] {
+            let runner = MockProcessRunner()
+            runner.enqueueVersion()
+            runner.enqueue(buildSettingsJSON(targets: [("Demo", "Demo.app")]))
+            let result = await makeCoordinator(runner: runner).execute(makeRequest(project: makeProject(), source: executionSource))
+            XCTAssertTrue(result.success, result.output)
+            XCTAssertTrue(runner.calls(to: "git").isEmpty)
+            XCTAssertTrue(result.output.contains("使用当前本地工作区"))
+            XCTAssertEqual(runner.calls(to: "xcodebuild").filter { $0.arguments.last == "build" }.count, 1)
+            XCTAssertEqual(try String(contentsOf: head), "local-detached-commit\n")
+            XCTAssertEqual(try String(contentsOf: source), "let localEdit = true\n")
         }
-        runner.enqueue(makeProcessResult(exitCode: 128, stderr: "missing remote ref"))
-        var coordinator = makeCoordinator(runner: runner, derivedDataRoot: workspaceRoot)
-        coordinator.provisioningProfilesDirectories = [profiles]
-
-        let result = await coordinator.execute(makeRequest(project: project))
-
-        XCTAssertFalse(result.success)
-        XCTAssertTrue(result.output.contains("源码版本检查失败"))
-        XCTAssertTrue(result.output.contains("main"))
-        XCTAssertTrue(runner.recordedCalls.allSatisfy { $0.executable == "/usr/bin/git" })
-        XCTAssertEqual(try String(contentsOf: marker), "existing app")
-        XCTAssertEqual(try String(contentsOf: profileURL), xml)
     }
 
-    func testSourceUpdatePrecedesFingerprintAndRunsOnce() async throws {
-        try FileManager.default.createDirectory(at: projectRoot.appendingPathComponent(".git"), withIntermediateDirectories: true)
-        let sourceURL = projectRoot.appendingPathComponent("Source.swift")
-        try Data("let version = 1\n".utf8).write(to: sourceURL)
+    func testFingerprintUsesCurrentLocalEditsWithoutSourceSynchronization() async throws {
+        let source = projectRoot.appendingPathComponent("Source.swift")
+        try Data("let version = 1\n".utf8).write(to: source)
         let project = makeProject()
         createApp("Demo.app")
         let oldFingerprint = try ProjectFingerprintService.fingerprint(of: project)
+        try Data("let version = 2 // local edit\n".utf8).write(to: source)
         let runner = MockProcessRunner()
-        for output in ["origin\n", "main\n", "origin/main\n"] {
-            runner.enqueue(makeProcessResult(exitCode: 0, stdout: output))
-        }
-        runner.enqueue(makeProcessResult(exitCode: 0)) { _ in
-            try! Data("let version = 2\n".utf8).write(to: sourceURL)
-        }
-        runner.enqueue(makeProcessResult(exitCode: 0, stdout: "abc123\n"))
-        runner.enqueue(makeProcessResult(exitCode: 0, stdout: "abc123\n"))
         runner.enqueueVersion()
         runner.enqueue(buildSettingsJSON(targets: [("Demo", "Demo.app")]))
-
         let result = await makeCoordinator(runner: runner).execute(makeRequest(project: project))
-
         XCTAssertTrue(result.success, result.output)
         let metadata = try XCTUnwrap(BuildCacheManager.loadMetadata(for: project.id, directory: cacheDirectory))
         XCTAssertNotEqual(metadata.fingerprint, oldFingerprint)
         XCTAssertEqual(metadata.fingerprint, try ProjectFingerprintService.fingerprint(of: project))
-        XCTAssertEqual(runner.calls(to: "git").filter { $0.arguments.contains("fetch") }.count, 1)
-        XCTAssertEqual(result.output.components(separatedBy: "=== SOURCE SYNC ===").count - 1, 1)
+        XCTAssertTrue(runner.calls(to: "git").isEmpty)
+        XCTAssertEqual(try String(contentsOf: source), "let version = 2 // local edit\n")
     }
 
     func testAutoSelectionRefreshesAfterBuildAndUsesNewlyConnectedDevice() async throws {
@@ -223,6 +196,23 @@ final class BuildCoordinatorTests: XCTestCase {
         XCTAssertEqual(result.failedDeviceUDIDs, ["D1"])
         XCTAssertEqual(result.deviceOutcomes.first?.attempts, 0)
         XCTAssertTrue(runner.recordedCalls.isEmpty)
+    }
+
+    func testIdlePairedPhonesReachSigningAndBothInstallsForManualAndScheduledRuns() async throws {
+        for source in [ExecutionSource.manual, .scheduled] {
+            let runner = MockProcessRunner()
+            createApp("Demo.app")
+            runner.enqueueVersion()
+            runner.enqueue(buildSettingsJSON(targets: [("Demo", "Demo.app")]))
+            var coordinator = makeCoordinator(runner: runner)
+            coordinator.deviceDiscovery = FixedDeviceDiscovery(devices: DeviceService.parseDevices(json: try pairedIdleDevicesJSON()))
+            let request = makeRequest(project: makeProject(deviceUDIDs: ["D1", "D2"]), source: source)
+            let result = await coordinator.execute(request)
+            XCTAssertTrue(result.success, result.output)
+            XCTAssertEqual(runner.calls(to: "xcodebuild").filter { $0.arguments.last == "build" }.count, 1)
+            XCTAssertEqual(runner.calls(to: "xcrun").map { $0.arguments[5] }, ["D1", "D2"])
+            XCTAssertEqual(result.deviceOutcomes.map(\.attempts), [1, 1])
+        }
     }
 
     func testDeviceDisconnectingDuringBuildProducesPartialSuccess() async {

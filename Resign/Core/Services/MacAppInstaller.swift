@@ -16,6 +16,21 @@ struct MacAppInstaller: Sendable {
     /// Injectable for tests; production installs into /Applications.
     var applicationsDirectory: URL = URL(fileURLWithPath: "/Applications", isDirectory: true)
 
+    // Only this constant is parsed as AppleScript. Bundle metadata and the
+    // fallback application name travel as argv data, never as source code.
+    private static let quitScript = """
+    on run argv
+        if (count of argv) is not 2 then error "Expected quit mode and target" number -50
+        if item 1 of argv is "id" then
+            quit application id (item 2 of argv)
+        else if item 1 of argv is "name" then
+            quit application (item 2 of argv)
+        else
+            error "Invalid quit mode" number -50
+        end if
+    end run
+    """
+
     func install(appPath: String) async -> Outcome {
         var log = ""
         let bundleName = URL(fileURLWithPath: appPath).lastPathComponent // "Foo.app"
@@ -53,12 +68,15 @@ struct MacAppInstaller: Sendable {
         //    仍不退出则中止安装，绝不替换一个还活着的应用。
         if await isRunning(executableName) {
             log += "检测到 \(baseName) 正在运行，请求退出…\n"
-            let quitScript = bundleID.map { "quit app id \"\($0)\"" } ?? "quit app \"\(baseName)\""
-            _ = await runner.run("/usr/bin/osascript", arguments: ["-e", quitScript])
+            _ = await runner.run("/usr/bin/osascript", arguments: [
+                "-e", Self.quitScript, "--", bundleID == nil ? "name" : "id", bundleID ?? baseName
+            ])
             try? await Task.sleep(for: .seconds(1))
             if await isRunning(executableName) {
                 log += "仍未退出，发送 TERM 信号…\n"
-                _ = await runner.run("/usr/bin/pkill", arguments: ["-TERM", "-x", executableName])
+                _ = await runner.run("/usr/bin/pkill", arguments: [
+                    "-TERM", "-x", "--", NSRegularExpression.escapedPattern(for: executableName)
+                ])
                 try? await Task.sleep(for: .seconds(1))
                 if await isRunning(executableName) {
                     log += "错误：\(baseName) 未能退出，已保留现有安装。请手动退出后重试。\n"
@@ -122,6 +140,11 @@ struct MacAppInstaller: Sendable {
     }
 
     private func isRunning(_ processName: String) async -> Bool {
-        let result = await runner.run("/usr/bin/pgrep", arguments: ["-x", processName])
+        // -x anchors an ERE; it does not make the process name literal. Also
+        // terminate options so an executable starting with '-' stays data.
+        let result = await runner.run("/usr/bin/pgrep", arguments: [
+            "-x", "--", NSRegularExpression.escapedPattern(for: processName)
+        ])
         return result.exitCode == 0
-    }}
+    }
+}
